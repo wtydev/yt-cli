@@ -2,11 +2,6 @@
  "kind": "youtubeAnalytics#resultTable",
  "columnHeaders": [
   {
-   "name": "video",
-   "columnType": "DIMENSION",
-   "dataType": "STRING"
-  },
-  {
    "name": "creatorContentType",
    "columnType": "DIMENSION",
    "dataType": "STRING"
@@ -19,14 +14,8 @@
  ],
  "rows": [
   [
-   "vidShort001",
-   "SHORTS",
+   "shorts",
    1200
-  ],
-  [
-   "vidLong0002",
-   "VIDEO_ON_DEMAND",
-   300
   ]
  ]
 }

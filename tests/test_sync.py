@@ -5,7 +5,6 @@ from conftest import FIX, FakeHttp, fixture, services
 from yt_cli import sync
 
 ANALYTICS_BY_DIMS = {
-    "video,creatorContentType": "an_video_content_type.json",
     "day,creatorContentType": "an_day_content_type.json",
     "day": "an_video_daily.json",
     "elapsedVideoTimeRatio": "an_retention.json",
@@ -18,7 +17,14 @@ ANALYTICS_BY_DIMS = {
 }
 
 
-def make_http(jobs_exist=False):
+def analytics(q, body):
+    if q["dimensions"] == "creatorContentType":
+        return 200, fixture("an_content_type_short.json" if "vidShort001" in q["filters"]
+                            else "an_content_type_long.json")
+    return 200, fixture(ANALYTICS_BY_DIMS[q["dimensions"]])
+
+
+def make_http(jobs_exist=False, fail_dims=()):
     state = {"jobs": [fixture("rep_job_created.json")] if jobs_exist else []}
 
     def jobs_list(q, body):
@@ -33,7 +39,8 @@ def make_http(jobs_exist=False):
         ("GET", "/youtube/v3/playlistItems", lambda q, b: (200, fixture(
             "playlist_items_p2.json" if q.get("pageToken") == "P2" else "playlist_items_p1.json"))),
         ("GET", "/youtube/v3/videos", lambda q, b: (200, fixture("videos_list.json"))),
-        ("GET", "/v2/reports", lambda q, b: (200, fixture(ANALYTICS_BY_DIMS[q["dimensions"]]))),
+        ("GET", "/v2/reports", lambda q, b: (500, {"error": {"code": 500, "message": "internal"}})
+         if q.get("dimensions") in fail_dims else analytics(q, b)),
         ("GET", "/v1/jobs/job-reach-1/reports", lambda q, b: (200, fixture("rep_reports.json"))),
         ("GET", "/v1/jobs", jobs_list),
         ("POST", "/v1/jobs", jobs_create),
@@ -113,3 +120,20 @@ def test_iso_duration():
 def test_published_day_is_pacific():
     # 03:00 UTC on Nov 11 is still Nov 10 in Los Angeles
     assert sync.published_day("2026-11-11T03:00:00Z") == date(2026, 11, 10)
+
+
+def test_channel_content_types_normalized(conn):
+    sync.run(services(make_http()), conn, "test", today=date(2026, 11, 22))
+    assert {r[0] for r in conn.execute("SELECT content_type FROM channel_daily_content_type")} == {
+        "SHORTS", "VIDEO_ON_DEMAND"}
+
+
+def test_server_error_breakdown_is_skipped_after_first_failure(conn):
+    http = make_http(fail_dims=("subscribedStatus",))
+    res = sync.run(services(http), conn, "test", today=date(2026, 11, 22))
+    sub_calls = [q for _, _, q in http.calls if q.get("dimensions") == "subscribedStatus"]
+    assert len(sub_calls) == 1 and res.skipped == ["subscribedStatus"]
+    assert len(res.warnings) == 1
+    # the other breakdowns still ran for both videos
+    assert conn.execute("SELECT count(DISTINCT video_id) FROM video_breakdown WHERE dimension='country'"
+                        ).fetchone()[0] == 2

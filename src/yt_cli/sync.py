@@ -36,7 +36,7 @@ DAILY_METRICS = [
 
 # Traffic source types that support an insightTrafficSourceDetail drill-down.
 DETAIL_TYPES = {
-    "ADVERTISING", "CAMPAIGN_CARD", "END_SCREEN", "EXT_URL", "HASHTAGS", "NOTIFICATION",
+    "ADVERTISING", "CAMPAIGN_CARD", "END_SCREEN", "EXT_URL", "HASHTAGS",
     "RELATED_VIDEO", "SOUND_PAGE", "SUBSCRIBER", "YT_CHANNEL", "YT_OTHER_PAGE", "YT_SEARCH",
     "VIDEO_REMIXES", "SHORTS_CONTENT_LINKS",
 }
@@ -55,9 +55,18 @@ class SyncResult:
     reports_downloaded: int = 0
     reach_rows: int = 0
     warnings: list[str] = field(default_factory=list)
+    # breakdowns that failed server-side this run; not retried for later videos
+    skipped: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------- helpers
+
+def normalize_content_type(v: str | None) -> str | None:
+    """The API returns e.g. 'shorts' / 'videoOnDemand'; store SHORTS / VIDEO_ON_DEMAND."""
+    if not v:
+        return v
+    return re.sub(r"(?<=[a-z])(?=[A-Z])", "_", v).upper()
+
 
 def iso_duration_seconds(s: str | None) -> int | None:
     if not s:
@@ -149,27 +158,27 @@ def fetch_videos(youtube, uploads_playlist: str) -> list[dict]:
 
 # ---------------------------------------------------------------- Analytics API
 
-def sync_content_types(analytics, conn, res: SyncResult, videos: list[dict], start: date, end: date) -> dict[str, str]:
-    """Shorts vs long form: per-video type plus a channel-level daily split."""
-    types: dict[str, str] = {}
-    try:
-        for r in query(analytics, start, end, "views", dimensions="video,creatorContentType",
-                       sort="-views", maxResults=200):
-            types[r["video"]] = r["creatorContentType"]
-    except HttpError as e:
-        res.warnings.append(f"per-video content type: {_err(e)}")
+def sync_channel_content_types(analytics, conn, res: SyncResult, start: date, end: date) -> None:
+    """Shorts vs long form, channel-level daily split."""
     try:
         rows = query(analytics, start, end,
                      "views,estimatedMinutesWatched,subscribersGained,subscribersLost",
                      dimensions="day,creatorContentType", sort="day")
         res.content_type_rows += upsert(conn, "channel_daily_content_type", (
-            {"channel_id": res.channel_id, "day": r["day"], "content_type": r["creatorContentType"],
+            {"channel_id": res.channel_id, "day": r["day"],
+             "content_type": normalize_content_type(r["creatorContentType"]),
              "views": r["views"], "watch_minutes": r["estimatedMinutesWatched"],
              "subs_gained": r["subscribersGained"], "subs_lost": r["subscribersLost"]}
             for r in rows), ["channel_id", "day", "content_type"])
     except HttpError as e:
         res.warnings.append(f"channel content-type split: {_err(e)}")
-    return types
+
+
+def video_content_type(analytics, video_id: str, start: date, end: date) -> str | None:
+    # dimensions=video,creatorContentType is not a supported query; filter per video instead.
+    rows = query(analytics, start, end, "views", dimensions="creatorContentType", filters=f"video=={video_id}")
+    rows.sort(key=lambda r: r.get("views") or 0, reverse=True)
+    return normalize_content_type(rows[0]["creatorContentType"]) if rows else None
 
 
 def sync_video_daily(analytics, conn, res: SyncResult, video_id: str, start: date, end: date) -> None:
@@ -194,10 +203,14 @@ def sync_video_lifetime(analytics, conn, res: SyncResult, video_id: str, start: 
     f = f"video=={video_id}"
 
     def safe(label, fn):
+        if label in res.skipped:
+            return
         try:
             fn()
         except HttpError as e:
             res.warnings.append(f"{video_id} {label}: {_err(e)}")
+            if int(e.resp.status) >= 500:
+                res.skipped.append(label)  # server-side failure: don't hammer it per video
 
     def retention():
         try:
@@ -357,9 +370,7 @@ def run(services, conn: sqlite3.Connection, name: str, *, today: date | None = N
     conn.commit()
 
     earliest = min((published_day(v["published_at"]) for v in videos), default=end)
-    types = sync_content_types(services.analytics, conn, res, videos, earliest, end)
-    for vid, t in types.items():
-        conn.execute("UPDATE videos SET content_type=? WHERE video_id=?", (t, vid))
+    sync_channel_content_types(services.analytics, conn, res, earliest, end)
     conn.commit()
 
     for i, v in enumerate(videos, 1):
@@ -369,6 +380,12 @@ def run(services, conn: sqlite3.Connection, name: str, *, today: date | None = N
             continue  # nothing to report yet (e.g. an unpublished upload)
         progress(f"video {i}/{len(videos)} {v['video_id']}")
         start = published_day(v["published_at"])
+        try:
+            ctype = video_content_type(services.analytics, v["video_id"], start, end)
+            if ctype:
+                conn.execute("UPDATE videos SET content_type=? WHERE video_id=?", (ctype, v["video_id"]))
+        except HttpError as e:
+            res.warnings.append(f"{v['video_id']} content type: {_err(e)}")
         try:
             sync_video_daily(services.analytics, conn, res, v["video_id"], start, end)
         except HttpError as e:

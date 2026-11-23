@@ -137,6 +137,10 @@ def video_detail(conn: sqlite3.Connection, video_id: str) -> dict[str, Any]:
 
 
 def best_video(conn: sqlite3.Connection, channel_id: str) -> str | None:
-    r = conn.execute("SELECT video_id FROM videos WHERE channel_id=? ORDER BY view_count DESC LIMIT 1",
-                     (channel_id,)).fetchone()
+    # Prefer analytics views: the newest upload can lead on the public counter
+    # while having no Analytics rows yet (1-2 day lag), which makes an empty report.
+    r = conn.execute(
+        "SELECT v.video_id FROM videos v LEFT JOIN video_daily d USING(video_id) WHERE v.channel_id=?"
+        " GROUP BY v.video_id ORDER BY coalesce(sum(d.views), 0) DESC, v.view_count DESC LIMIT 1",
+        (channel_id,)).fetchone()
     return r[0] if r else None

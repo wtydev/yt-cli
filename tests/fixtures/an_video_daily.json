@@ -1,0 +1,81 @@
+{
+ "kind": "youtubeAnalytics#resultTable",
+ "columnHeaders": [
+  {
+   "name": "day",
+   "columnType": "DIMENSION",
+   "dataType": "STRING"
+  },
+  {
+   "name": "views",
+   "columnType": "METRIC",
+   "dataType": "INTEGER"
+  },
+  {
+   "name": "estimatedMinutesWatched",
+   "columnType": "METRIC",
+   "dataType": "INTEGER"
+  },
+  {
+   "name": "averageViewDuration",
+   "columnType": "METRIC",
+   "dataType": "FLOAT"
+  },
+  {
+   "name": "averageViewPercentage",
+   "columnType": "METRIC",
+   "dataType": "FLOAT"
+  },
+  {
+   "name": "subscribersGained",
+   "columnType": "METRIC",
+   "dataType": "INTEGER"
+  },
+  {
+   "name": "subscribersLost",
+   "columnType": "METRIC",
+   "dataType": "INTEGER"
+  },
+  {
+   "name": "likes",
+   "columnType": "METRIC",
+   "dataType": "INTEGER"
+  },
+  {
+   "name": "comments",
+   "columnType": "METRIC",
+   "dataType": "INTEGER"
+  },
+  {
+   "name": "shares",
+   "columnType": "METRIC",
+   "dataType": "INTEGER"
+  }
+ ],
+ "rows": [
+  [
+   "2026-11-10",
+   700,
+   9,
+   40,
+   83.3,
+   3,
+   0,
+   6,
+   1,
+   2
+  ],
+  [
+   "2026-11-11",
+   500,
+   6,
+   38,
+   79.1,
+   1,
+   1,
+   4,
+   1,
+   0
+  ]
+ ]
+}

@@ -1,0 +1,89 @@
+{
+ "kind": "youtube#videoListResponse",
+ "items": [
+  {
+   "kind": "youtube#video",
+   "id": "vidShort001",
+   "snippet": {
+    "publishedAt": "2026-11-10T16:00:00Z",
+    "channelId": "UCtestChannel000000000000",
+    "title": "Binary Search Rap",
+    "description": "",
+    "categoryId": "27"
+   },
+   "contentDetails": {
+    "duration": "PT48S",
+    "dimension": "2d",
+    "definition": "hd"
+   },
+   "status": {
+    "uploadStatus": "processed",
+    "privacyStatus": "public",
+    "madeForKids": false,
+    "containsSyntheticMedia": true
+   },
+   "statistics": {
+    "viewCount": "1200",
+    "likeCount": "10",
+    "favoriteCount": "0",
+    "commentCount": "2"
+   }
+  },
+  {
+   "kind": "youtube#video",
+   "id": "vidLong0002",
+   "snippet": {
+    "publishedAt": "2026-11-01T16:00:00Z",
+    "channelId": "UCtestChannel000000000000",
+    "title": "Big O Explained",
+    "description": "",
+    "categoryId": "27"
+   },
+   "contentDetails": {
+    "duration": "PT8M15S",
+    "dimension": "2d",
+    "definition": "hd"
+   },
+   "status": {
+    "uploadStatus": "processed",
+    "privacyStatus": "public",
+    "madeForKids": false,
+    "containsSyntheticMedia": true
+   },
+   "statistics": {
+    "viewCount": "300",
+    "likeCount": "10",
+    "favoriteCount": "0",
+    "commentCount": "2"
+   }
+  },
+  {
+   "kind": "youtube#video",
+   "id": "vidPriv0003",
+   "snippet": {
+    "publishedAt": "2026-11-20T16:00:00Z",
+    "channelId": "UCtestChannel000000000000",
+    "title": "Draft upload",
+    "description": "",
+    "categoryId": "27"
+   },
+   "contentDetails": {
+    "duration": "PT1M",
+    "dimension": "2d",
+    "definition": "hd"
+   },
+   "status": {
+    "uploadStatus": "processed",
+    "privacyStatus": "private",
+    "madeForKids": false,
+    "containsSyntheticMedia": true
+   },
+   "statistics": {
+    "viewCount": "0",
+    "likeCount": "10",
+    "favoriteCount": "0",
+    "commentCount": "2"
+   }
+  }
+ ]
+}

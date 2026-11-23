@@ -1,0 +1,37 @@
+{
+ "kind": "youtubeAnalytics#resultTable",
+ "columnHeaders": [
+  {
+   "name": "ageGroup",
+   "columnType": "DIMENSION",
+   "dataType": "STRING"
+  },
+  {
+   "name": "gender",
+   "columnType": "DIMENSION",
+   "dataType": "STRING"
+  },
+  {
+   "name": "viewerPercentage",
+   "columnType": "METRIC",
+   "dataType": "FLOAT"
+  }
+ ],
+ "rows": [
+  [
+   "age18-24",
+   "male",
+   55.0
+  ],
+  [
+   "age25-34",
+   "male",
+   30.0
+  ],
+  [
+   "age18-24",
+   "female",
+   15.0
+  ]
+ ]
+}

@@ -1,0 +1,4 @@
+date,channel_id,video_id,live_or_on_demand,subscribed_status,country_code,video_thumbnail_impressions,video_thumbnail_impressions_ctr
+20261120,UCtestChannel000000000000,vidShort001,on_demand,subscribed,US,1000,0.05
+20261120,UCtestChannel000000000000,vidShort001,on_demand,unsubscribed,US,3000,0.03
+20261120,UCtestChannel000000000000,vidLong0002,on_demand,unsubscribed,IN,500,0.10

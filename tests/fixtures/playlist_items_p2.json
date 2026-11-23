@@ -1,0 +1,17 @@
+{
+ "kind": "youtube#playlistItemListResponse",
+ "pageInfo": {
+  "totalResults": 3,
+  "resultsPerPage": 2
+ },
+ "items": [
+  {
+   "kind": "youtube#playlistItem",
+   "id": "pi3",
+   "contentDetails": {
+    "videoId": "vidPriv0003",
+    "videoPublishedAt": "2026-11-20T16:00:00Z"
+   }
+  }
+ ]
+}

@@ -1,0 +1,32 @@
+{
+ "kind": "youtubeAnalytics#resultTable",
+ "columnHeaders": [
+  {
+   "name": "subscribedStatus",
+   "columnType": "DIMENSION",
+   "dataType": "STRING"
+  },
+  {
+   "name": "views",
+   "columnType": "METRIC",
+   "dataType": "INTEGER"
+  },
+  {
+   "name": "estimatedMinutesWatched",
+   "columnType": "METRIC",
+   "dataType": "INTEGER"
+  }
+ ],
+ "rows": [
+  [
+   "UNSUBSCRIBED",
+   1100,
+   13
+  ],
+  [
+   "SUBSCRIBED",
+   100,
+   2
+  ]
+ ]
+}

@@ -1,0 +1,26 @@
+{
+ "kind": "youtube#playlistItemListResponse",
+ "nextPageToken": "P2",
+ "pageInfo": {
+  "totalResults": 3,
+  "resultsPerPage": 2
+ },
+ "items": [
+  {
+   "kind": "youtube#playlistItem",
+   "id": "pi1",
+   "contentDetails": {
+    "videoId": "vidShort001",
+    "videoPublishedAt": "2026-11-10T16:00:00Z"
+   }
+  },
+  {
+   "kind": "youtube#playlistItem",
+   "id": "pi2",
+   "contentDetails": {
+    "videoId": "vidLong0002",
+    "videoPublishedAt": "2026-11-01T16:00:00Z"
+   }
+  }
+ ]
+}

@@ -1,0 +1,83 @@
+{
+ "kind": "youtube#commentThreadListResponse",
+ "nextPageToken": "C2",
+ "items": [
+  {
+   "kind": "youtube#commentThread",
+   "id": "Ugw1",
+   "snippet": {
+    "channelId": "UCtestChannel000000000000",
+    "videoId": "vidShort001",
+    "topLevelComment": {
+     "kind": "youtube#comment",
+     "id": "Ugw1",
+     "snippet": {
+      "channelId": "UCtestChannel000000000000",
+      "videoId": "vidShort001",
+      "textDisplay": "this is AI slop lol",
+      "textOriginal": "this is AI slop lol",
+      "authorDisplayName": "@viewer1",
+      "authorChannelId": {
+       "value": "UCviewer1"
+      },
+      "likeCount": 1,
+      "publishedAt": "2026-11-21T10:00:00Z",
+      "updatedAt": "2026-11-21T10:00:00Z"
+     }
+    },
+    "canReply": true,
+    "totalReplyCount": 1,
+    "isPublic": true
+   },
+   "replies": {
+    "comments": [
+     {
+      "kind": "youtube#comment",
+      "id": "Ugw1.r1",
+      "snippet": {
+       "channelId": "UCtestChannel000000000000",
+       "videoId": "vidShort001",
+       "textDisplay": "nah the beat is fire",
+       "textOriginal": "nah the beat is fire",
+       "authorDisplayName": "@viewer1",
+       "authorChannelId": {
+        "value": "UCviewer1"
+       },
+       "likeCount": 1,
+       "publishedAt": "2026-11-21T10:00:00Z",
+       "updatedAt": "2026-11-21T10:00:00Z"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "kind": "youtube#commentThread",
+   "id": "Ugw2",
+   "snippet": {
+    "channelId": "UCtestChannel000000000000",
+    "videoId": "vidShort001",
+    "topLevelComment": {
+     "kind": "youtube#comment",
+     "id": "Ugw2",
+     "snippet": {
+      "channelId": "UCtestChannel000000000000",
+      "videoId": "vidShort001",
+      "textDisplay": "Great explanation of binary search!",
+      "textOriginal": "Great explanation of binary search!",
+      "authorDisplayName": "@viewer2",
+      "authorChannelId": {
+       "value": "UCviewer2"
+      },
+      "likeCount": 1,
+      "publishedAt": "2026-11-20T10:00:00Z",
+      "updatedAt": "2026-11-20T10:00:00Z"
+     }
+    },
+    "canReply": true,
+    "totalReplyCount": 0,
+    "isPublic": true
+   }
+  }
+ ]
+}

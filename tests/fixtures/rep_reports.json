@@ -1,0 +1,12 @@
+{
+ "reports": [
+  {
+   "id": "rep-1",
+   "jobId": "job-reach-1",
+   "startTime": "2026-11-20T08:00:00Z",
+   "endTime": "2026-11-21T08:00:00Z",
+   "createTime": "2026-11-22T10:00:00Z",
+   "downloadUrl": "https://youtubereporting.googleapis.com/v1/media/CHANNEL/rep-1?alt=media"
+  }
+ ]
+}

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>yt-cli</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --background: #fafaf9;
+      --text: #1c2226;
+      --muted: #535e65;
+      --link: #155981;
+      --rule: #d1d8db;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --background: #151a1d;
+        --text: #e9edf0;
+        --muted: #b4bfc7;
+        --link: #92ccf2;
+        --rule: #46525a;
+      }
+    }
+
+    body {
+      box-sizing: border-box;
+      max-width: 46rem;
+      margin: 0 auto;
+      padding: clamp(1.25rem, 5vw, 3rem);
+      background: var(--background);
+      color: var(--text);
+      font: 1rem/1.65 system-ui, sans-serif;
+    }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0.25rem 1.25rem;
+      padding-block-end: 0.75rem;
+      border-block-end: 1px solid var(--rule);
+    }
+
+    a {
+      color: var(--link);
+      text-underline-offset: 0.18em;
+    }
+
+    [aria-current="page"] {
+      font-weight: 650;
+    }
+
+    h1, h2 {
+      line-height: 1.2;
+    }
+
+    h1 {
+      margin: 2rem 0 0.75rem;
+      font-size: clamp(2rem, 6vw, 2.75rem);
+      letter-spacing: -0.03em;
+    }
+
+    h2 {
+      margin: 1.75rem 0 0.5rem;
+      font-size: 1.25rem;
+    }
+
+    p, dl {
+      margin: 0.75rem 0;
+    }
+
+    dt {
+      margin-block-start: 0.75rem;
+      font-weight: 650;
+    }
+
+    dd {
+      margin-inline-start: 0;
+    }
+
+    code {
+      font-family: ui-monospace, monospace;
+      font-size: 0.92em;
+      overflow-wrap: anywhere;
+    }
+
+    .date {
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <nav aria-label="Main">
+    <a href="index.html" aria-current="page">yt-cli</a>
+    <a href="privacy.html">Privacy policy</a>
+    <a href="terms.html">Terms of service</a>
+    <a href="https://github.com/wtydev/yt-cli">GitHub</a>
+  </nav>
+  <main>
+    <h1>yt-cli</h1>
+    <p>yt-cli (<code>yt</code>) is a personal Python command-line tool that a YouTube creator runs on their own computer to manage their own channels. It uses Google OAuth to connect to YouTube, retrieve channel and video analytics, upload videos, and work with video comments, including pinning a comment. It stores its data on the creator’s computer.</p>
+  </main>
+</body>
+</html>

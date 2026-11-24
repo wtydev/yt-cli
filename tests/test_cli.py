@@ -9,14 +9,14 @@ from yt_cli.db import upsert
 def test_upload_without_yes_is_a_dry_run(tmp_path, capsys, monkeypatch):
     (tmp_path / "v.mp4").write_bytes(b"\0" * 10)
     monkeypatch.setattr(cli, "_services", lambda ch: pytest.fail("must not touch the API without --yes"))
-    cli.main(["upload", "bigobars", "--file", str(tmp_path / "v.mp4"), "--title", "T", "--privacy", "public"])
+    cli.main(["upload", "mychannel", "--file", str(tmp_path / "v.mp4"), "--title", "T", "--privacy", "public"])
     out = capsys.readouterr().out
     assert "Would upload" in out and "Nothing sent" in out and "locked to private" in out
 
 
 def test_json_flag_before_or_after_subcommand(capsys):
     conn = db.connect()
-    upsert(conn, "channels", [{"name": "bigobars", "channel_id": "UC1", "title": "Big"}], ["name"])
+    upsert(conn, "channels", [{"name": "mychannel", "channel_id": "UC1", "title": "Big"}], ["name"])
     conn.commit()
     for argv in (["--json", "channels"], ["channels", "--json"]):
         cli.main(argv)

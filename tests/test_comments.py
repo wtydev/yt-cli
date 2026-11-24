@@ -11,7 +11,7 @@ from yt_cli import comments
     ("sounds like text to speech", True),
     ("did chatgpt write this", True),
     ("pure slop", True),
-    ("Great explanation of binary search!", False),
+    ("Great explanation of sourdough!", False),
     ("I said hi to my aunt in Hawaii", False),
     ("the beat is fire", False),
     ("maintain the pace", False),

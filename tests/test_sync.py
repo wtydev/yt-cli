@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from conftest import FIX, FakeHttp, fixture, services
 
@@ -137,3 +137,14 @@ def test_server_error_breakdown_is_skipped_after_first_failure(conn):
     # the other breakdowns still ran for both videos
     assert conn.execute("SELECT count(DISTINCT video_id) FROM video_breakdown WHERE dimension='country'"
                         ).fetchone()[0] == 2
+
+
+def test_resync_skips_known_content_types_and_resumes_channel_split(conn):
+    sync.run(services(make_http()), conn, "test", today=date(2026, 11, 22))
+    http = make_http(jobs_exist=True)
+    sync.run(services(http), conn, "test", today=date(2026, 11, 22))
+    dims = [q.get("dimensions") for _, p, q in http.calls if p.endswith("/reports")]
+    assert "creatorContentType" not in dims  # both videos already typed
+    last = conn.execute("SELECT max(day) FROM channel_daily_content_type").fetchone()[0]
+    split = next(q for _, p, q in http.calls if q.get("dimensions") == "day,creatorContentType")
+    assert split["startDate"] == (date.fromisoformat(last) - timedelta(days=sync.REFRESH_DAYS)).isoformat()

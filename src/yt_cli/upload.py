@@ -6,13 +6,15 @@ from __future__ import annotations
 import json
 import random
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from googleapiclient.errors import HttpError, ResumableUploadError
 from googleapiclient.http import MediaFileUpload
+
+from .config import PRIVACY
 
 RETRIABLE_STATUS = {500, 502, 503, 504}
 MAX_RETRIES = 8
@@ -24,7 +26,6 @@ CATEGORIES = {
     "comedy": "23", "entertainment": "24", "news": "25", "howto": "26", "howto & style": "26",
     "education": "27", "science": "28", "science & technology": "28", "nonprofits": "29",
 }
-PRIVACY = {"private", "unlisted", "public"}
 
 
 @dataclass
@@ -41,18 +42,15 @@ class UploadSpec:
     made_for_kids: bool = False
     synthetic_media: bool | None = None  # status.containsSyntheticMedia (AI disclosure)
 
-    KEYS = {"file", "title", "description", "tags", "category", "privacy", "publish_at",
-            "thumbnail", "playlist", "made_for_kids", "synthetic_media"}
-
     @classmethod
-    def build(cls, meta_file: str | None, overrides: dict[str, Any]) -> "UploadSpec":
+    def build(cls, meta_file: str | None, overrides: dict[str, Any]) -> UploadSpec:
         data: dict[str, Any] = {}
         base = Path(".")
         if meta_file:
             p = Path(meta_file)
             data = json.loads(p.read_text())
             base = p.parent
-            unknown = set(data) - cls.KEYS
+            unknown = set(data) - {f.name for f in fields(cls)}
             if unknown:
                 raise SystemExit(f"Unknown keys in {meta_file}: {', '.join(sorted(unknown))}")
             for k in ("file", "thumbnail"):  # paths in the JSON are relative to it
@@ -74,7 +72,7 @@ class UploadSpec:
             raise SystemExit(f"Unknown category '{self.category}'. Use an ID or one of: "
                              + ", ".join(sorted(CATEGORIES)))
         if self.privacy not in PRIVACY:
-            raise SystemExit(f"privacy must be one of {sorted(PRIVACY)}")
+            raise SystemExit(f"privacy must be one of {list(PRIVACY)}")
         if not Path(self.file).is_file():
             raise SystemExit(f"Video file not found: {self.file}")
         if self.thumbnail and not Path(self.thumbnail).is_file():
@@ -85,7 +83,7 @@ class UploadSpec:
             raise SystemExit("Description exceeds 5000 bytes.")
         if self.publish_at:
             try:
-                dt = datetime.fromisoformat(self.publish_at.replace("Z", "+00:00"))
+                dt = datetime.fromisoformat(self.publish_at)
             except ValueError:
                 raise SystemExit("publish_at must be ISO 8601, e.g. 2026-12-01T17:00:00Z")
             if dt.tzinfo is None:
@@ -149,7 +147,7 @@ def _backoff(retry: int, why: str, sleep) -> int:
 def run(youtube, spec: UploadSpec, progress=lambda pct: None, sleep=time.sleep) -> dict:
     media = MediaFileUpload(spec.file, chunksize=CHUNK, resumable=True)
     req = youtube.videos().insert(part="snippet,status", body=spec.body(), media_body=media,
-                                  notifySubscribers=False if spec.privacy == "private" else True)
+                                  notifySubscribers=spec.privacy != "private")
     video = _resumable(req, progress, sleep)
     out = {"video_id": video["id"], "privacy": video.get("status", {}).get("privacyStatus"),
            "url": f"https://youtu.be/{video['id']}", "thumbnail_set": False, "playlist_item": None}

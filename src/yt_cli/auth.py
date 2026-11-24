@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import os
-from dataclasses import dataclass
-from typing import Any
+from functools import cached_property
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -50,8 +48,7 @@ def load(channel: str) -> Credentials:
     path = config.token_path(channel)
     if not path.exists():
         raise SystemExit(f"No token for '{channel}'. Run: yt auth {channel}")
-    info = json.loads(path.read_text())
-    creds = Credentials.from_authorized_user_info(info, info.get("scopes"))
+    creds = Credentials.from_authorized_user_file(str(path))
     if not creds.valid:
         if creds.refresh_token:
             creds.refresh(Request())
@@ -61,20 +58,25 @@ def load(channel: str) -> Credentials:
     return creds
 
 
-@dataclass
 class Services:
-    """The three API clients. Tests build these with an HttpMock instead."""
+    """The three API clients, each built on first use from the same `build()`
+    keyword arguments. Tests pass a fake `http` instead of credentials."""
 
-    youtube: Any
-    analytics: Any
-    reporting: Any
+    def __init__(self, **build_kw):
+        self._kw = build_kw
+
+    @cached_property
+    def youtube(self):
+        return build("youtube", "v3", **self._kw)
+
+    @cached_property
+    def analytics(self):
+        return build("youtubeAnalytics", "v2", **self._kw)
+
+    @cached_property
+    def reporting(self):
+        return build("youtubereporting", "v1", **self._kw)
 
     @classmethod
-    def for_channel(cls, channel: str) -> "Services":
-        creds = load(channel)
-        kw = {"credentials": creds, "cache_discovery": False}
-        return cls(
-            youtube=build("youtube", "v3", **kw),
-            analytics=build("youtubeAnalytics", "v2", **kw),
-            reporting=build("youtubereporting", "v1", **kw),
-        )
+    def for_channel(cls, channel: str) -> Services:
+        return cls(credentials=load(channel), cache_discovery=False)

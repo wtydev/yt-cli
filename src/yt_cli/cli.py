@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import asdict
 from typing import Any
 
-from . import db, output
+from . import config, db, output
 from .output import kv, table
 
 
@@ -28,10 +29,7 @@ def cmd_auth(args) -> Any:
     from . import auth, sync
 
     creds = auth.login(args.channel, monetary=args.monetary)
-    from googleapiclient.discovery import build
-
-    yt = build("youtube", "v3", credentials=creds, cache_discovery=False)
-    ch = sync.fetch_channel(yt)
+    ch = sync.fetch_channel(auth.Services(credentials=creds, cache_discovery=False).youtube)
     conn = db.connect()
     clash = conn.execute("SELECT name FROM channels WHERE channel_id=? AND name!=?",
                          (ch["channel_id"], args.channel)).fetchone()
@@ -42,7 +40,7 @@ def cmd_auth(args) -> Any:
     conn.commit()
     data = {"name": args.channel, **ch, "scopes": sorted(creds.scopes or [])}
     return data, lambda d: kv({"channel": d["name"], "title": d["title"], "channel_id": d["channel_id"],
-                               "token": f"~/.config/yt-cli/tokens/{d['name']}.json"}, "Authorized")
+                               "token": str(config.token_path(d["name"]))}, "Authorized")
 
 
 def cmd_channels(args) -> Any:
@@ -57,7 +55,7 @@ def cmd_sync(args) -> Any:
     conn = db.connect()
     res = sync.run(_services(args.channel), conn, args.channel, video_ids=args.video or None,
                    progress=_progress(args))
-    data = sync.summary(res)
+    data = asdict(res)
 
     def render(d):
         lines = [kv({k: v for k, v in d.items() if k not in ("warnings", "jobs_created")}, "Synced")]
@@ -75,6 +73,19 @@ def cmd_sync(args) -> Any:
         return "\n".join(lines)
 
     return data, render
+
+
+# (key in video_detail, table title, hide when empty)
+VIDEO_SECTIONS = [
+    ("traffic", "Traffic sources", False),
+    ("traffic_detail", "Top traffic details", True),
+    ("subscribed", "Subscribed status", False),
+    ("countries", "Top countries", False),
+    ("age_gender", "Age / gender (% of viewers)", False),
+    ("devices", "Devices", False),
+    ("daily", "Day by day (Pacific dates)", False),
+    ("reach_daily", "Impressions and CTR by day", True),
+]
 
 
 def cmd_video(args) -> Any:
@@ -101,16 +112,8 @@ def cmd_video(args) -> Any:
                                       "vs_similar": p["relative_retention"],
                                       "": output.bar(p["audience_watch_ratio"], peak, 30)} for p in pts],
                                     title="Retention (audience watch ratio, %)"))
-        out.append("\n" + table(d["traffic"], title="Traffic sources"))
-        if d["traffic_detail"]:
-            out.append("\n" + table(d["traffic_detail"], title="Top traffic details"))
-        out.append("\n" + table(d["subscribed"], title="Subscribed status"))
-        out.append("\n" + table(d["countries"], title="Top countries"))
-        out.append("\n" + table(d["age_gender"], title="Age / gender (% of viewers)"))
-        out.append("\n" + table(d["devices"], title="Devices"))
-        out.append("\n" + table(d["daily"], title="Day by day (Pacific dates)"))
-        if d["reach_daily"]:
-            out.append("\n" + table(d["reach_daily"], title="Impressions and CTR by day"))
+        out += ["\n" + table(d[key], title=title) for key, title, optional in VIDEO_SECTIONS
+                if d[key] or not optional]
         return "\n".join(out)
 
     return data, render
@@ -160,8 +163,8 @@ def cmd_upload(args) -> Any:
         return data, lambda d: "\n".join([kv(plan, f"Would upload to '{args.channel}':"), *notes,
                                           "\nNothing sent. Re-run with --yes to upload."])
     services = _services(args.channel)
-    progress = (lambda p: None) if args.json else (lambda p: print(f"  … {p}%", file=sys.stderr))
-    result = upload.run(services.youtube, spec, progress)
+    say = _progress(args)
+    result = upload.run(services.youtube, spec, lambda pct: say(f"{pct}%"))
     return {"dry_run": False, "plan": plan, "result": result, "notes": notes}, \
         lambda d: "\n".join([kv(d["result"], "Uploaded"), *notes])
 
@@ -174,16 +177,15 @@ def cmd_comments(args) -> Any:
     if args.pin:  # no API for this, so nothing is ever written
         msg = comments.pin_unsupported_message(conn, args.pin)
         return {"pin": args.pin, "pinned": False, "message": msg}, lambda d: d["message"]
-    res = None
-    if not args.no_fetch:
-        res = comments.sync(_services(args.channel).youtube, conn, cid, full=args.full)
+    res = (comments.CommentsResult() if args.no_fetch
+           else comments.sync(_services(args.channel).youtube, conn, cid, full=args.full))
     flagged = " AND c.flagged_ai=1" if args.flagged else ""
     rows = [dict(r) for r in conn.execute(
         "SELECT c.published_at, c.video_id, v.title AS video, c.author, c.flagged_ai AS ai, c.text, c.comment_id"
         f" FROM comments c LEFT JOIN videos v USING(video_id) WHERE c.channel_id=?{flagged}"
         " ORDER BY c.published_at DESC LIMIT ?", (cid, args.limit))]
-    data = {"fetched": res.fetched if res else 0, "new": res.new if res else 0,
-            "new_flagged": [r["comment_id"] for r in res.new_flagged] if res else [],
+    data = {"fetched": res.fetched, "new": res.new,
+            "new_flagged": [r["comment_id"] for r in res.new_flagged],
             "total_flagged": conn.execute("SELECT count(*) FROM comments WHERE channel_id=? AND flagged_ai=1",
                                           (cid,)).fetchone()[0],
             "comments": rows}
@@ -240,7 +242,7 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--description")
     s.add_argument("--tags", help="comma-separated")
     s.add_argument("--category", help="ID or name, e.g. 27 or education")
-    s.add_argument("--privacy", choices=["private", "unlisted", "public"])
+    s.add_argument("--privacy", choices=config.PRIVACY)
     s.add_argument("--publish-at", help="ISO 8601 with timezone; requires private")
     s.add_argument("--thumbnail")
     s.add_argument("--playlist", help="playlist ID to add the video to")

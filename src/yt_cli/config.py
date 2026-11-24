@@ -19,6 +19,7 @@ MONETARY_SCOPE = "https://www.googleapis.com/auth/yt-analytics-monetary.readonly
 
 # Reporting API jobs created on first sync. channel_reach_basic_a1 carries
 # thumbnail impressions and CTR, which the Analytics API does not expose.
+PRIVACY = ("private", "unlisted", "public")
 DEFAULT_REPORT_TYPES = ["channel_reach_basic_a1"]
 
 

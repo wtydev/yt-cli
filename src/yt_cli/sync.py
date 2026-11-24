@@ -9,13 +9,14 @@ import gzip
 import io
 import re
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date, timedelta
-from typing import Any
+from datetime import date, datetime, timedelta
 
 from googleapiclient.errors import HttpError
 
 from . import config
+from .api import describe, pages, status
 from .db import upsert
 
 # Re-pull this many trailing days on every sync: Analytics data lands 1-2 days
@@ -55,8 +56,20 @@ class SyncResult:
     reports_downloaded: int = 0
     reach_rows: int = 0
     warnings: list[str] = field(default_factory=list)
-    # breakdowns that failed server-side this run; not retried for later videos
+    # steps that failed server-side this run; not retried for later videos
     skipped: list[str] = field(default_factory=list)
+
+    def guard(self, label: str, fn: Callable[..., object], *args, ctx: str = "") -> None:
+        """Run one API step. An HttpError becomes a warning; after a 5xx the
+        step is skipped for the rest of the run instead of failing per video."""
+        if label in self.skipped:
+            return
+        try:
+            fn(*args)
+        except HttpError as e:
+            self.warnings.append(f"{ctx} {label}: {describe(e)}".lstrip())
+            if status(e) >= 500:
+                self.skipped.append(label)
 
 
 # ---------------------------------------------------------------- helpers
@@ -92,21 +105,17 @@ def query(analytics, start: date, end: date, metrics: str, **kw) -> list[dict]:
     return rows_of(resp)
 
 
-def _err(e: HttpError) -> str:
-    try:
-        return f"{e.resp.status} {e.error_details or e._get_reason()}"
-    except Exception:  # pragma: no cover
-        return str(e)
-
-
 def published_day(published_at: str | None) -> date:
     """Publish timestamp (UTC) -> Pacific date, the day Analytics starts counting."""
-    from datetime import datetime
-
     if not published_at:
         return date(2005, 4, 23)
-    dt = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
-    return dt.astimezone(config.PACIFIC).date()
+    return datetime.fromisoformat(published_at).astimezone(config.PACIFIC).date()
+
+
+def _refresh_start(conn, sql: str, arg: str, start: date) -> date:
+    """Resume from the last stored day minus REFRESH_DAYS, never before `start`."""
+    last = conn.execute(sql, (arg,)).fetchone()[0]
+    return max(start, date.fromisoformat(last) - timedelta(days=REFRESH_DAYS)) if last else start
 
 
 # ---------------------------------------------------------------- Data API
@@ -125,16 +134,10 @@ def fetch_channel(youtube) -> dict:
 
 
 def fetch_videos(youtube, uploads_playlist: str) -> list[dict]:
-    ids: list[str] = []
-    token = None
-    while True:
-        resp = youtube.playlistItems().list(
-            part="contentDetails", playlistId=uploads_playlist, maxResults=50, pageToken=token
-        ).execute()
-        ids += [it["contentDetails"]["videoId"] for it in resp.get("items", [])]
-        token = resp.get("nextPageToken")
-        if not token:
-            break
+    ids = [it["contentDetails"]["videoId"]
+           for resp in pages(youtube.playlistItems(), part="contentDetails",
+                             playlistId=uploads_playlist, maxResults=50)
+           for it in resp.get("items", [])]
     videos = []
     for i in range(0, len(ids), 50):
         resp = youtube.videos().list(
@@ -160,7 +163,10 @@ def fetch_videos(youtube, uploads_playlist: str) -> list[dict]:
 
 def sync_channel_content_types(analytics, conn, res: SyncResult, start: date, end: date) -> None:
     """Shorts vs long form, channel-level daily split."""
-    try:
+    start = _refresh_start(conn, "SELECT max(day) FROM channel_daily_content_type WHERE channel_id=?",
+                           res.channel_id, start)
+
+    def run():
         rows = query(analytics, start, end,
                      "views,estimatedMinutesWatched,subscribersGained,subscribersLost",
                      dimensions="day,creatorContentType", sort="day")
@@ -170,8 +176,13 @@ def sync_channel_content_types(analytics, conn, res: SyncResult, start: date, en
              "views": r["views"], "watch_minutes": r["estimatedMinutesWatched"],
              "subs_gained": r["subscribersGained"], "subs_lost": r["subscribersLost"]}
             for r in rows), ["channel_id", "day", "content_type"])
-    except HttpError as e:
-        res.warnings.append(f"channel content-type split: {_err(e)}")
+    res.guard("channel content-type split", run)
+
+
+def store_content_type(analytics, conn, video_id: str, start: date, end: date) -> None:
+    ctype = video_content_type(analytics, video_id, start, end)
+    if ctype:
+        conn.execute("UPDATE videos SET content_type=? WHERE video_id=?", (ctype, video_id))
 
 
 def video_content_type(analytics, video_id: str, start: date, end: date) -> str | None:
@@ -182,9 +193,7 @@ def video_content_type(analytics, video_id: str, start: date, end: date) -> str 
 
 
 def sync_video_daily(analytics, conn, res: SyncResult, video_id: str, start: date, end: date) -> None:
-    last = conn.execute("SELECT max(day) FROM video_daily WHERE video_id=?", (video_id,)).fetchone()[0]
-    if last:
-        start = max(start, date.fromisoformat(last) - timedelta(days=REFRESH_DAYS))
+    start = _refresh_start(conn, "SELECT max(day) FROM video_daily WHERE video_id=?", video_id, start)
     if start > end:
         return
     rows = query(analytics, start, end, ",".join(m for m, _ in DAILY_METRICS),
@@ -202,21 +211,16 @@ def _replace(conn: sqlite3.Connection, table: str, where: dict, rows: list[dict]
 def sync_video_lifetime(analytics, conn, res: SyncResult, video_id: str, start: date, end: date) -> None:
     f = f"video=={video_id}"
 
-    def safe(label, fn):
-        if label in res.skipped:
-            return
-        try:
-            fn()
-        except HttpError as e:
-            res.warnings.append(f"{video_id} {label}: {_err(e)}")
-            if int(e.resp.status) >= 500:
-                res.skipped.append(label)  # server-side failure: don't hammer it per video
+    def safe(label, fn, *args):
+        res.guard(label, fn, *args, ctx=video_id)
 
     def retention():
         try:
             rows = query(analytics, start, end, "audienceWatchRatio,relativeRetentionPerformance",
                          dimensions="elapsedVideoTimeRatio", filters=f)
-        except HttpError:
+        except HttpError as e:
+            if status(e) != 400:  # only a rejected metric is worth retrying without it
+                raise
             rows = query(analytics, start, end, "audienceWatchRatio",
                          dimensions="elapsedVideoTimeRatio", filters=f)
         res.retention_rows += _replace(conn, "video_retention", {"video_id": video_id}, [
@@ -226,24 +230,23 @@ def sync_video_lifetime(analytics, conn, res: SyncResult, video_id: str, start: 
             ["video_id", "elapsed_ratio"])
 
     def traffic():
+        def row(t: str, detail: str, r: dict) -> dict:
+            return {"video_id": video_id, "source_type": t, "source_detail": detail,
+                    "views": r["views"], "watch_minutes": r["estimatedMinutesWatched"]}
+
+        def details(t: str) -> None:
+            det = query(analytics, start, end, "views,estimatedMinutesWatched",
+                        dimensions="insightTrafficSourceDetail",
+                        filters=f"{f};insightTrafficSourceType=={t}", sort="-views", maxResults=25)
+            out.extend(row(t, d["insightTrafficSourceDetail"] or "(unknown)", d) for d in det)
+
         rows = query(analytics, start, end, "views,estimatedMinutesWatched",
                      dimensions="insightTrafficSourceType", filters=f, sort="-views")
-        out = [{"video_id": video_id, "source_type": r["insightTrafficSourceType"], "source_detail": "",
-                "views": r["views"], "watch_minutes": r["estimatedMinutesWatched"]} for r in rows]
+        out = [row(r["insightTrafficSourceType"], "", r) for r in rows]
         for r in rows:
             t = r["insightTrafficSourceType"]
-            if t not in DETAIL_TYPES or not r["views"]:
-                continue
-            try:
-                det = query(analytics, start, end, "views,estimatedMinutesWatched",
-                            dimensions="insightTrafficSourceDetail",
-                            filters=f"{f};insightTrafficSourceType=={t}", sort="-views", maxResults=25)
-            except HttpError as e:
-                res.warnings.append(f"{video_id} traffic detail {t}: {_err(e)}")
-                continue
-            out += [{"video_id": video_id, "source_type": t,
-                     "source_detail": d["insightTrafficSourceDetail"] or "(unknown)",
-                     "views": d["views"], "watch_minutes": d["estimatedMinutesWatched"]} for d in det]
+            if t in DETAIL_TYPES and r["views"]:
+                safe(f"traffic detail {t}", details, t)
         res.traffic_rows += _replace(conn, "video_traffic", {"video_id": video_id}, out,
                                      ["video_id", "source_type", "source_detail"])
 
@@ -271,14 +274,7 @@ def sync_video_lifetime(analytics, conn, res: SyncResult, video_id: str, start: 
 # ---------------------------------------------------------------- Reporting API
 
 def ensure_jobs(reporting, conn, res: SyncResult, report_types: list[str]) -> list[dict]:
-    existing: list[dict] = []
-    token = None
-    while True:
-        resp = reporting.jobs().list(pageToken=token).execute()
-        existing += resp.get("jobs", [])
-        token = resp.get("nextPageToken")
-        if not token:
-            break
+    existing = [j for resp in pages(reporting.jobs()) for j in resp.get("jobs", [])]
     have = {j["reportTypeId"] for j in existing}
     for t in report_types:
         if t in have:
@@ -321,19 +317,16 @@ def ingest_reach_csv(conn, channel_id: str, text: str, create_time: str) -> int:
             (channel_id, day, create_time)).fetchone()
         if newer:
             continue
-        conn.execute("DELETE FROM reach_daily WHERE channel_id=? AND day=?", (channel_id, day))
-        n += upsert(conn, "reach_daily", (
+        n += _replace(conn, "reach_daily", {"channel_id": channel_id, "day": day}, [
             {"channel_id": channel_id, "day": d, "video_id": v, "impressions": int(a[0]),
              "clicks": a[1], "source_create_time": create_time}
-            for (d, v), a in agg.items() if d == day), ["channel_id", "day", "video_id"])
+            for (d, v), a in agg.items() if d == day], ["channel_id", "day", "video_id"])
     return n
 
 
 def sync_reports(reporting, conn, res: SyncResult, jobs: list[dict]) -> None:
     for job in jobs:
-        token = None
-        while True:
-            resp = reporting.jobs().reports().list(jobId=job["id"], pageToken=token).execute()
+        for resp in pages(reporting.jobs().reports(), jobId=job["id"]):
             for rep in resp.get("reports", []):
                 if conn.execute("SELECT 1 FROM report_files WHERE report_id=?", (rep["id"],)).fetchone():
                     continue
@@ -348,9 +341,6 @@ def sync_reports(reporting, conn, res: SyncResult, jobs: list[dict]) -> None:
                     "create_time": rep.get("createTime"), "rows": n}], ["report_id"])
                 conn.commit()
                 res.reports_downloaded += 1
-            token = resp.get("nextPageToken")
-            if not token:
-                break
 
 
 # ---------------------------------------------------------------- entry point
@@ -373,38 +363,30 @@ def run(services, conn: sqlite3.Connection, name: str, *, today: date | None = N
     sync_channel_content_types(services.analytics, conn, res, earliest, end)
     conn.commit()
 
+    # A video's content type never changes once known; only look up the missing ones.
+    typed = {r[0] for r in conn.execute(
+        "SELECT video_id FROM videos WHERE channel_id=? AND content_type IS NOT NULL", (res.channel_id,))}
+
     for i, v in enumerate(videos, 1):
-        if video_ids and v["video_id"] not in video_ids:
+        vid = v["video_id"]
+        if video_ids and vid not in video_ids:
             continue
         if v["privacy"] == "private" and not v["view_count"]:
             continue  # nothing to report yet (e.g. an unpublished upload)
-        progress(f"video {i}/{len(videos)} {v['video_id']}")
+        progress(f"video {i}/{len(videos)} {vid}")
         start = published_day(v["published_at"])
-        try:
-            ctype = video_content_type(services.analytics, v["video_id"], start, end)
-            if ctype:
-                conn.execute("UPDATE videos SET content_type=? WHERE video_id=?", (ctype, v["video_id"]))
-        except HttpError as e:
-            res.warnings.append(f"{v['video_id']} content type: {_err(e)}")
-        try:
-            sync_video_daily(services.analytics, conn, res, v["video_id"], start, end)
-        except HttpError as e:
-            res.warnings.append(f"{v['video_id']} daily: {_err(e)}")
-        sync_video_lifetime(services.analytics, conn, res, v["video_id"], start, end)
+        if vid not in typed:
+            res.guard("content type", store_content_type, services.analytics, conn, vid, start, end, ctx=vid)
+        res.guard("daily", sync_video_daily, services.analytics, conn, res, vid, start, end, ctx=vid)
+        sync_video_lifetime(services.analytics, conn, res, vid, start, end)
         conn.commit()
 
     progress("reporting")
-    try:
+
+    def reporting():
         jobs = ensure_jobs(services.reporting, conn, res, report_types or config.DEFAULT_REPORT_TYPES)
         conn.commit()
         sync_reports(services.reporting, conn, res, jobs)
-    except HttpError as e:
-        res.warnings.append(f"reporting: {_err(e)}")
+    res.guard("reporting", reporting)
     conn.commit()
     return res
-
-
-def summary(res: SyncResult) -> dict[str, Any]:
-    from dataclasses import asdict
-
-    return asdict(res)

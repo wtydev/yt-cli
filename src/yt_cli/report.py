@@ -40,16 +40,16 @@ def video_metrics(conn: sqlite3.Connection, video_id: str) -> dict[str, Any]:
     ai = conn.execute("SELECT count(*) FROM comments WHERE video_id=? AND flagged_ai=1", (video_id,)).fetchone()[0]
 
     views = d["views"] or 0
-    dur = v["duration_s"] if v else None
+    dur = v["duration_s"]
     total_traffic = sum(traffic.values())
     imp = reach["imp"]
     return {
         "video_id": video_id,
-        "title": v["title"] if v else None,
-        "published": (v["published_at"] or "")[:10] if v else None,
-        "type": v["content_type"] if v else None,
+        "title": v["title"],
+        "published": (v["published_at"] or "")[:10],
+        "type": v["content_type"],
         "duration_s": dur,
-        "views": views if d["views"] is not None else (v["view_count"] if v else None),
+        "views": views if d["views"] is not None else v["view_count"],
         "impressions": imp,
         "ctr_pct": (reach["clicks"] / imp * 100) if imp else None,
         "ret_30s_pct": (retention_at(ret, 30 / dur) * 100) if dur and dur >= 30 and ret else None,
@@ -71,15 +71,21 @@ def _avg(rows: list[dict], key: str) -> float | None:
     return mean(vals) if vals else None
 
 
+# Analytics views when synced, else the public counter (same rule as video_metrics).
+VIEWS_SQL = ("SELECT v.video_id, v.title, substr(v.published_at, 1, 10) AS published,"
+             " coalesce(sum(d.views), v.view_count) AS views"
+             " FROM videos v LEFT JOIN video_daily d USING(video_id) WHERE v.channel_id=?")
+
+
 def scorecard(conn: sqlite3.Connection, channel_id: str, content_type: str | None = None) -> dict[str, Any]:
-    sql = "SELECT video_id, view_count FROM videos WHERE channel_id=? AND privacy='public'"
-    args: list[Any] = [channel_id]
+    sql, args = VIEWS_SQL + " AND v.privacy='public'", [channel_id]
     if content_type:
-        sql += " AND content_type=?"
+        sql += " AND v.content_type=?"
         args.append(content_type)
-    vids = conn.execute(sql + " ORDER BY published_at DESC", args).fetchall()
-    per_video = [video_metrics(conn, r["video_id"]) for r in vids]
-    last, prev = per_video[:WINDOW], per_video[WINDOW:2 * WINDOW]
+    per_video = [dict(r) for r in conn.execute(sql + " GROUP BY v.video_id ORDER BY v.published_at DESC", args)]
+    # Full metrics only for the two windows; the median and outliers need views alone.
+    last = [video_metrics(conn, r["video_id"]) for r in per_video[:WINDOW]]
+    prev = [video_metrics(conn, r["video_id"]) for r in per_video[WINDOW:2 * WINDOW]]
 
     trend = []
     for m in SCORE_METRICS:
@@ -112,7 +118,7 @@ def scorecard(conn: sqlite3.Connection, channel_id: str, content_type: str | Non
 def video_detail(conn: sqlite3.Connection, video_id: str) -> dict[str, Any]:
     if not conn.execute("SELECT 1 FROM videos WHERE video_id=?", (video_id,)).fetchone():
         raise SystemExit(f"Video {video_id} is not in the database. Run: yt sync <channel>")
-    q = lambda sql: [dict(r) for r in conn.execute(sql, (video_id,))]  # noqa: E731
+    q = lambda sql: [dict(r) for r in conn.execute(sql, (video_id,))]
     return {
         "summary": video_metrics(conn, video_id),
         "retention": q("SELECT elapsed_ratio, audience_watch_ratio, relative_retention"
@@ -139,8 +145,6 @@ def video_detail(conn: sqlite3.Connection, video_id: str) -> dict[str, Any]:
 def best_video(conn: sqlite3.Connection, channel_id: str) -> str | None:
     # Prefer analytics views: the newest upload can lead on the public counter
     # while having no Analytics rows yet (1-2 day lag), which makes an empty report.
-    r = conn.execute(
-        "SELECT v.video_id FROM videos v LEFT JOIN video_daily d USING(video_id) WHERE v.channel_id=?"
-        " GROUP BY v.video_id ORDER BY coalesce(sum(d.views), 0) DESC, v.view_count DESC LIMIT 1",
-        (channel_id,)).fetchone()
+    r = conn.execute(VIEWS_SQL + " GROUP BY v.video_id ORDER BY coalesce(sum(d.views), 0) DESC,"
+                     " v.view_count DESC LIMIT 1", (channel_id,)).fetchone()
     return r[0] if r else None

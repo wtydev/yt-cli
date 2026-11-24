@@ -10,7 +10,6 @@ from urllib.parse import parse_qs, urlparse
 
 import httplib2
 import pytest
-from googleapiclient.discovery import build
 
 from yt_cli import db
 from yt_cli.auth import Services
@@ -42,10 +41,7 @@ class FakeHttp:
 
 
 def services(http: FakeHttp) -> Services:
-    kw = {"http": http, "static_discovery": True}
-    return Services(youtube=build("youtube", "v3", **kw),
-                    analytics=build("youtubeAnalytics", "v2", **kw),
-                    reporting=build("youtubereporting", "v1", **kw))
+    return Services(http=http, static_discovery=True)
 
 
 @pytest.fixture

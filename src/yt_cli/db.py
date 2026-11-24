@@ -107,6 +107,7 @@ CREATE TABLE IF NOT EXISTS comments (
 );
 CREATE INDEX IF NOT EXISTS comments_video ON comments(video_id);
 CREATE INDEX IF NOT EXISTS videos_channel ON videos(channel_id, published_at);
+CREATE INDEX IF NOT EXISTS reach_video ON reach_daily(video_id, day);
 """
 
 
@@ -124,19 +125,20 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
 
 
 def upsert(conn: sqlite3.Connection, table: str, rows: Iterable[Mapping], keys: list[str]) -> int:
-    """INSERT ... ON CONFLICT(keys) DO UPDATE for each row. Returns row count."""
-    n = 0
-    for row in rows:
-        cols = list(row)
-        updates = [c for c in cols if c not in keys]
-        sql = (
-            f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})"
-            f" ON CONFLICT({', '.join(keys)}) DO "
-            + (f"UPDATE SET {', '.join(f'{c}=excluded.{c}' for c in updates)}" if updates else "NOTHING")
-        )
-        conn.execute(sql, [row[c] for c in cols])
-        n += 1
-    return n
+    """INSERT ... ON CONFLICT(keys) DO UPDATE for each row. Every row must have
+    the same columns as the first. Returns row count."""
+    rows = list(rows)
+    if not rows:
+        return 0
+    cols = list(rows[0])
+    updates = [c for c in cols if c not in keys]
+    sql = (
+        f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})"
+        f" ON CONFLICT({', '.join(keys)}) DO "
+        + (f"UPDATE SET {', '.join(f'{c}=excluded.{c}' for c in updates)}" if updates else "NOTHING")
+    )
+    conn.executemany(sql, ([row[c] for c in cols] for row in rows))
+    return len(rows)
 
 
 def channel_id_for(conn: sqlite3.Connection, name: str) -> str:

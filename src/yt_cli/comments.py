@@ -8,7 +8,9 @@ from __future__ import annotations
 import re
 import sqlite3
 from dataclasses import dataclass, field
+from itertools import islice
 
+from .api import pages
 from .db import upsert
 
 AI_PATTERN = re.compile(
@@ -57,12 +59,9 @@ def sync(youtube, conn: sqlite3.Connection, channel_id: str, *, full: bool = Fal
     res = CommentsResult()
     known = {r[0]: r[1] for r in conn.execute(
         "SELECT comment_id, updated_at FROM comments WHERE channel_id=?", (channel_id,))}
-    token = None
-    for _ in range(max_pages):
-        resp = youtube.commentThreads().list(
-            part="snippet,replies", allThreadsRelatedToChannelId=channel_id, maxResults=100,
-            order="time", textFormat="plainText", pageToken=token,
-        ).execute()
+    threads = pages(youtube.commentThreads(), part="snippet,replies", allThreadsRelatedToChannelId=channel_id,
+                    maxResults=100, order="time", textFormat="plainText")
+    for resp in islice(threads, max_pages):
         rows: list[dict] = []
         page_all_known = True
         for th in resp.get("items", []):
@@ -84,21 +83,15 @@ def sync(youtube, conn: sqlite3.Connection, channel_id: str, *, full: bool = Fal
         res.fetched += len(rows)
         upsert(conn, "comments", rows, ["comment_id"])
         conn.commit()
-        token = resp.get("nextPageToken")
-        if not token or (page_all_known and not full):
+        if page_all_known and not full:
             break
     return res
 
 
 def _all_replies(youtube, parent_id: str) -> list[dict]:
-    out, token = [], None
-    while True:
-        resp = youtube.comments().list(part="snippet", parentId=parent_id, maxResults=100,
-                                       textFormat="plainText", pageToken=token).execute()
-        out += resp.get("items", [])
-        token = resp.get("nextPageToken")
-        if not token:
-            return out
+    return [c for resp in pages(youtube.comments(), part="snippet", parentId=parent_id, maxResults=100,
+                                textFormat="plainText")
+            for c in resp.get("items", [])]
 
 
 def pin_unsupported_message(conn: sqlite3.Connection, comment_id: str) -> str:

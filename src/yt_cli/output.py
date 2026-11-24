@@ -29,10 +29,7 @@ def fmt(v: Any) -> str:
 
 def table(rows: Sequence[Mapping], columns: Sequence[str] | None = None, title: str | None = None,
           max_width: int = 60) -> str:
-    if title:
-        out = [title]
-    else:
-        out = []
+    out = [title] if title else []
     if not rows:
         out.append("  (none)")
         return "\n".join(out)

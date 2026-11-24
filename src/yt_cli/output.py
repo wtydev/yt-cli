@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -19,7 +20,7 @@ def fmt(v: Any) -> str:
     if isinstance(v, bool):
         return "yes" if v else "no"
     if isinstance(v, float):
-        if v != v:  # NaN
+        if math.isnan(v):
             return "-"
         return f"{v:,.1f}" if abs(v) >= 100 else f"{v:,.2f}"
     if isinstance(v, int):

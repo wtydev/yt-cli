@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from itertools import pairwise
 from statistics import mean, median
 from typing import Any
 
@@ -11,6 +12,7 @@ from .config import pacific_day
 BROWSE_SUGGESTED = ("SUBSCRIBER", "RELATED_VIDEO")  # "Browse features" + "Suggested videos"
 OUTLIER_MULTIPLE = 5.0
 WINDOW = 4
+HOOK_S = 3  # seconds: did viewers stay past the opening?
 
 
 def retention_at(points: list[tuple[float, float]], ratio: float) -> float | None:
@@ -20,7 +22,7 @@ def retention_at(points: list[tuple[float, float]], ratio: float) -> float | Non
     points = sorted(points)
     if ratio <= points[0][0]:
         return points[0][1]
-    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+    for (x0, y0), (x1, y1) in pairwise(points):
         if x0 <= ratio <= x1:
             return y0 if x1 == x0 else y0 + (y1 - y0) * (ratio - x0) / (x1 - x0)
     return points[-1][1]
@@ -54,7 +56,10 @@ def video_metrics(conn: sqlite3.Connection, video_id: str) -> dict[str, Any]:
         "views": views if d["views"] is not None else v["view_count"],
         "impressions": imp,
         "ctr_pct": (reach["clicks"] / imp * 100) if imp else None,
-        "ret_30s_pct": (retention_at(ret, 30 / dur) * 100) if dur and dur >= 30 and ret else None,
+        # Retention at a fixed time (the hook) and at a fixed fraction (the middle): both
+        # compare fairly across lengths, unlike a fixed mark such as 30 s.
+        "hook_3s_pct": (retention_at(ret, min(HOOK_S / dur, 1)) * 100) if dur and ret else None,
+        "ret_half_pct": (retention_at(ret, 0.5) * 100) if ret else None,
         "avg_viewed_pct": (d["pct_w"] / views) if views and d["pct_w"] is not None else None,
         "subs_per_1k": ((d["g"] or 0) - (d["l"] or 0)) / views * 1000 if views else None,
         "browse_sugg_pct": sum(traffic.get(t, 0) for t in BROWSE_SUGGESTED) / total_traffic * 100
@@ -64,7 +69,7 @@ def video_metrics(conn: sqlite3.Connection, video_id: str) -> dict[str, Any]:
     }
 
 
-SCORE_METRICS = ["impressions", "ctr_pct", "ret_30s_pct", "avg_viewed_pct", "subs_per_1k",
+SCORE_METRICS = ["impressions", "ctr_pct", "hook_3s_pct", "ret_half_pct", "avg_viewed_pct", "subs_per_1k",
                  "browse_sugg_pct", "ai_comments"]
 
 
@@ -75,7 +80,7 @@ def _avg(rows: list[dict], key: str) -> float | None:
 
 # Analytics views when synced, else the public counter (same rule as video_metrics).
 VIEWS_SQL = ("SELECT v.video_id, v.title, v.published_at,"
-             " coalesce(sum(d.views), v.view_count) AS views"
+             " coalesce(sum(d.views), v.view_count) AS views, count(d.day) AS analytics_days"
              " FROM videos v LEFT JOIN video_daily d USING(video_id) WHERE v.channel_id=?")
 
 
@@ -86,9 +91,13 @@ def scorecard(conn: sqlite3.Connection, channel_id: str, content_type: str | Non
         args.append(content_type)
     per_video = [{**r, "published": str(pacific_day(r["published_at"]) or "")}
                  for r in map(dict, conn.execute(sql + " GROUP BY v.video_id ORDER BY v.published_at DESC", args))]
-    # Full metrics only for the two windows; the median and outliers need views alone.
-    last = [video_metrics(conn, r["video_id"]) for r in per_video[:WINDOW]]
-    prev = [video_metrics(conn, r["video_id"]) for r in per_video[WINDOW:2 * WINDOW]]
+    # Videos not in Analytics yet (1-2 day lag) would average in as empty, so the windows
+    # skip them; they are listed as pending. The median and outliers need views alone.
+    pending = [{k: r[k] for k in ("video_id", "title", "published", "views")}
+               for r in per_video if not r["analytics_days"]]
+    ready = [r for r in per_video if r["analytics_days"]]
+    last = [video_metrics(conn, r["video_id"]) for r in ready[:WINDOW]]
+    prev = [video_metrics(conn, r["video_id"]) for r in ready[WINDOW:2 * WINDOW]]
 
     trend = []
     for m in SCORE_METRICS:
@@ -110,6 +119,7 @@ def scorecard(conn: sqlite3.Connection, channel_id: str, content_type: str | Non
         "median_views": med,
         "trend": trend,
         "last_videos": last,
+        "pending": pending,
         "outliers": outliers,
         "ai_comments_last": sum(v["ai_comments"] for v in last),
         "ai_comments_prev": sum(v["ai_comments"] for v in prev),

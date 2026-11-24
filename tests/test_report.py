@@ -45,17 +45,25 @@ def test_video_metrics(conn):
     seed(conn)
     m = report.video_metrics(conn, "v1")
     assert m["ctr_pct"] == pytest.approx(4.1)
-    assert m["ret_30s_pct"] == pytest.approx(75.0)  # 30s of 60s -> halfway 1.0..0.5
+    assert m["hook_3s_pct"] == pytest.approx(97.5)  # 3s of 60s = 5% of the way from 1.0 to 0.5
+    assert m["ret_half_pct"] == pytest.approx(75.0)
     assert m["subs_per_1k"] == pytest.approx(1 / 101 * 1000)
     assert m["browse_sugg_pct"] == pytest.approx(40.0)
     assert m["shorts_feed_pct"] == pytest.approx(60.0)
     assert m["ai_comments"] == 1
 
 
-def test_short_video_has_no_30s_retention(conn):
+def test_retention_measures_scale_with_length(conn):
     seed(conn)
-    conn.execute("UPDATE videos SET duration_s=20 WHERE video_id='v1'")
-    assert report.video_metrics(conn, "v1")["ret_30s_pct"] is None
+    conn.execute("UPDATE videos SET duration_s=12 WHERE video_id='v1'")
+    m = report.video_metrics(conn, "v1")
+    assert m["hook_3s_pct"] == pytest.approx(87.5)  # 3s is 25% of a 12s video
+    assert m["ret_half_pct"] == pytest.approx(75.0)  # the middle does not depend on length
+    conn.execute("UPDATE videos SET duration_s=2 WHERE video_id='v1'")
+    assert report.video_metrics(conn, "v1")["hook_3s_pct"] == pytest.approx(50.0)  # capped at the end
+    conn.execute("DELETE FROM video_retention WHERE video_id='v1'")
+    m = report.video_metrics(conn, "v1")
+    assert m["hook_3s_pct"] is None and m["ret_half_pct"] is None
 
 
 def test_scorecard_windows_trend_and_outliers(conn):
@@ -63,12 +71,24 @@ def test_scorecard_windows_trend_and_outliers(conn):
     sc = report.scorecard(conn, "UC")
     assert sc["videos_considered"] == 9
     assert [v["video_id"] for v in sc["last_videos"]] == ["v0", "v1", "v2", "v3"]
+    assert sc["pending"] == []
     ctr = next(t for t in sc["trend"] if t["metric"] == "ctr_pct")
     assert ctr["last_4"] == pytest.approx(4.15)  # clicks 40..43 per 1000
     assert ctr["prev_4"] == pytest.approx(4.55)  # 44..47
     assert ctr["change_pct"] == pytest.approx((4.15 - 4.55) / 4.55 * 100)
     assert [o["video_id"] for o in sc["outliers"]] == ["v0"]
     assert sc["ai_comments_last"] == 1 and sc["ai_comments_prev"] == 0
+
+
+def test_scorecard_skips_videos_not_in_analytics_yet(conn):
+    seed(conn)
+    upsert(conn, "videos", [{"video_id": "new", "channel_id": "UC", "title": "Brand new", "privacy": "public",
+                             "published_at": "2026-10-22T00:00:00Z", "duration_s": 60, "view_count": 30}],
+           ["video_id"])
+    sc = report.scorecard(conn, "UC")
+    assert sc["videos_considered"] == 10
+    assert [v["video_id"] for v in sc["last_videos"]] == ["v0", "v1", "v2", "v3"]
+    assert sc["pending"] == [{"video_id": "new", "title": "Brand new", "published": "2026-10-21", "views": 30}]
 
 
 def test_scorecard_type_filter(conn):

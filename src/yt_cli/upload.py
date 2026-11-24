@@ -5,15 +5,18 @@ from __future__ import annotations
 
 import json
 import random
+import sys
 import time
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import httplib2
 from googleapiclient.errors import HttpError, ResumableUploadError
 from googleapiclient.http import MediaFileUpload
 
+from .api import describe
 from .config import PRIVACY
 
 RETRIABLE_STATUS = {500, 502, 503, 504}
@@ -129,7 +132,7 @@ def _resumable(request, progress=lambda pct: None, sleep=time.sleep) -> dict:
             if code is None or int(code) not in RETRIABLE_STATUS:
                 raise
             retry = _backoff(retry, f"HTTP {code}", sleep)
-        except (ConnectionError, TimeoutError, OSError) as e:
+        except (ConnectionError, TimeoutError, OSError, httplib2.HttpLib2Error) as e:
             retry = _backoff(retry, type(e).__name__, sleep)
     return response
 
@@ -139,7 +142,7 @@ def _backoff(retry: int, why: str, sleep) -> int:
     if retry > MAX_RETRIES:
         raise SystemExit(f"Upload failed after {MAX_RETRIES} retries ({why}).")
     delay = random.uniform(0, 2 ** retry)
-    print(f"  {why}; retry {retry}/{MAX_RETRIES} in {delay:.1f}s")
+    print(f"  {why}; retry {retry}/{MAX_RETRIES} in {delay:.1f}s", file=sys.stderr)
     sleep(delay)
     return retry
 
@@ -150,12 +153,22 @@ def run(youtube, spec: UploadSpec, progress=lambda pct: None, sleep=time.sleep) 
                                   notifySubscribers=spec.privacy != "private")
     video = _resumable(req, progress, sleep)
     out = {"video_id": video["id"], "privacy": video.get("status", {}).get("privacyStatus"),
-           "url": f"https://youtu.be/{video['id']}", "thumbnail_set": False, "playlist_item": None}
-    if spec.thumbnail:
-        youtube.thumbnails().set(videoId=video["id"], media_body=MediaFileUpload(spec.thumbnail)).execute()
-        out["thumbnail_set"] = True
-    if spec.playlist:
-        item = youtube.playlistItems().insert(part="snippet", body={"snippet": {
-            "playlistId": spec.playlist, "resourceId": {"kind": "youtube#video", "videoId": video["id"]}}}).execute()
-        out["playlist_item"] = item["id"]
+           "url": f"https://youtu.be/{video['id']}", "thumbnail_set": False, "playlist_item": None,
+           "errors": []}
+    # The video exists now. A failed follow-up step must not hide its ID, or a
+    # retry of the whole command would upload a duplicate.
+    try:
+        if spec.thumbnail:
+            youtube.thumbnails().set(videoId=video["id"], media_body=MediaFileUpload(spec.thumbnail)).execute()
+            out["thumbnail_set"] = True
+    except HttpError as e:
+        out["errors"].append(f"thumbnail: {describe(e)}")
+    try:
+        if spec.playlist:
+            item = youtube.playlistItems().insert(part="snippet", body={"snippet": {
+                "playlistId": spec.playlist,
+                "resourceId": {"kind": "youtube#video", "videoId": video["id"]}}}).execute()
+            out["playlist_item"] = item["id"]
+    except HttpError as e:
+        out["errors"].append(f"playlist: {describe(e)}")
     return out

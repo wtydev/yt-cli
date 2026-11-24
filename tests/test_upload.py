@@ -68,3 +68,42 @@ def test_resumable_retries_5xx_then_succeeds():
 def test_resumable_does_not_retry_4xx():
     with pytest.raises(HttpError):
         upload._resumable(FlakyRequest([403]), sleep=lambda s: None)
+
+
+def test_resumable_retries_transport_errors():
+    class DnsFlaky:
+        n = 0
+
+        def next_chunk(self):
+            self.n += 1
+            if self.n == 1:
+                raise httplib2.ServerNotFoundError("dns")
+            return None, {"id": "newVid"}
+
+    assert upload._resumable(DnsFlaky(), sleep=lambda s: None) == {"id": "newVid"}
+
+
+def test_failed_thumbnail_keeps_video_id(media, monkeypatch):
+    class Exec:
+        def __init__(self, fn):
+            self.execute = fn
+
+    def boom():
+        raise HttpError(httplib2.Response({"status": 400}), b"{}")
+
+    class YT:
+        def videos(self):
+            return self
+
+        def insert(self, **kw):
+            return "req"
+
+        def thumbnails(self):
+            return type("T", (), {"set": lambda self, **kw: Exec(boom)})()
+
+    monkeypatch.setattr(upload, "_resumable", lambda req, progress, sleep: {"id": "newVid"})
+    spec = upload.UploadSpec.build(None, {"file": str(media / "v.mp4"), "title": "t",
+                                          "thumbnail": str(media / "t.png")})
+    out = upload.run(YT(), spec)
+    assert out["video_id"] == "newVid" and not out["thumbnail_set"]
+    assert out["errors"] and out["errors"][0].startswith("thumbnail: 400")

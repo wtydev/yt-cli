@@ -34,8 +34,9 @@ def cmd_auth(args) -> Any:
     clash = conn.execute("SELECT name FROM channels WHERE channel_id=? AND name!=?",
                          (ch["channel_id"], args.channel)).fetchone()
     if clash:
-        print(f"warning: this is the same channel as '{clash[0]}'. Did you pick the right "
-              "channel on Google's account chooser?", file=sys.stderr)
+        raise SystemExit(f"'{ch['title']}' is already authorized as '{clash[0]}'; nothing saved. "
+                         f"Use 'yt auth {clash[0]}', or pick another channel on Google's chooser.")
+    auth.save(creds, args.channel)
     db.upsert(conn, "channels", [{"name": args.channel, **ch}], ["name"])
     conn.commit()
     data = {"name": args.channel, **ch, "scopes": sorted(creds.scopes or [])}
@@ -54,11 +55,15 @@ def cmd_sync(args) -> Any:
 
     conn = db.connect()
     res = sync.run(_services(args.channel), conn, args.channel, video_ids=args.video or None,
-                   progress=_progress(args))
+                   progress=_progress(args), create_jobs=args.yes)
     data = asdict(res)
 
     def render(d):
-        lines = [kv({k: v for k, v in d.items() if k not in ("warnings", "jobs_created")}, "Synced")]
+        lines = [kv({k: v for k, v in d.items() if k not in ("warnings", "jobs_created", "jobs_missing")},
+                    "Synced")]
+        if d["jobs_missing"]:
+            lines.append(f"\nWould create Reporting API job(s): {', '.join(d['jobs_missing'])} "
+                         "(needed for impressions/CTR). Re-run with --yes to create them.")
         if d["jobs_created"]:
             lines.append(f"\nCreated Reporting API jobs: {', '.join(d['jobs_created'])}. "
                          "The first daily reports arrive within ~48 hours; run sync again then.")
@@ -166,7 +171,9 @@ def cmd_upload(args) -> Any:
     say = _progress(args)
     result = upload.run(services.youtube, spec, lambda pct: say(f"{pct}%"))
     return {"dry_run": False, "plan": plan, "result": result, "notes": notes}, \
-        lambda d: "\n".join([kv(d["result"], "Uploaded"), *notes])
+        lambda d: "\n".join([kv({k: v for k, v in d["result"].items() if k != "errors"}, "Uploaded"), *notes,
+                             *(f"warning: {e} (the video was uploaded; fix this in Studio)"
+                               for e in d["result"]["errors"])])
 
 
 def cmd_comments(args) -> Any:
@@ -222,6 +229,7 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser("sync", parents=[common], help="pull analytics and reach reports into the database")
     s.add_argument("channel")
     s.add_argument("--video", action="append", help="only sync these video IDs (repeatable)")
+    s.add_argument("--yes", action="store_true", help="create missing Reporting API jobs (a write)")
     s.set_defaults(fn=cmd_sync)
 
     s = sub.add_parser("video", parents=[common], help="one video in detail")

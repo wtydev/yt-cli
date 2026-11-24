@@ -12,7 +12,7 @@ from googleapiclient.discovery import build
 from . import config
 
 
-def _save(creds: Credentials, channel: str) -> None:
+def save(creds: Credentials, channel: str) -> None:
     path = config.token_path(channel)
     path.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
@@ -22,9 +22,11 @@ def _save(creds: Credentials, channel: str) -> None:
 
 
 def login(channel: str, monetary: bool = False) -> Credentials:
-    """Browser sign-in. Pick the channel (brand account) on Google's chooser."""
+    """Browser sign-in. Pick the channel (brand account) on Google's chooser.
+    The caller saves the token once it has checked which channel this is."""
     from google_auth_oauthlib.flow import InstalledAppFlow
 
+    config.token_path(channel)  # validate the name before the browser round trip
     secret = config.client_secret_path()
     if not secret.exists():
         raise SystemExit(
@@ -40,7 +42,6 @@ def login(channel: str, monetary: bool = False) -> Credentials:
         authorization_prompt_message="Opening your browser to sign in. If it doesn't open, visit:\n{url}\n",
         success_message="yt-cli is authorized. You can close this tab.",
     )
-    _save(creds, channel)
     return creds
 
 
@@ -52,7 +53,7 @@ def load(channel: str) -> Credentials:
     if not creds.valid:
         if creds.refresh_token:
             creds.refresh(Request())
-            _save(creds, channel)
+            save(creds, channel)
         else:
             raise SystemExit(f"Token for '{channel}' expired. Run: yt auth {channel}")
     return creds

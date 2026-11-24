@@ -6,6 +6,8 @@ import sqlite3
 from statistics import mean, median
 from typing import Any
 
+from .config import pacific_day
+
 BROWSE_SUGGESTED = ("SUBSCRIBER", "RELATED_VIDEO")  # "Browse features" + "Suggested videos"
 OUTLIER_MULTIPLE = 5.0
 WINDOW = 4
@@ -46,7 +48,7 @@ def video_metrics(conn: sqlite3.Connection, video_id: str) -> dict[str, Any]:
     return {
         "video_id": video_id,
         "title": v["title"],
-        "published": (v["published_at"] or "")[:10],
+        "published": str(pacific_day(v["published_at"]) or ""),
         "type": v["content_type"],
         "duration_s": dur,
         "views": views if d["views"] is not None else v["view_count"],
@@ -72,7 +74,7 @@ def _avg(rows: list[dict], key: str) -> float | None:
 
 
 # Analytics views when synced, else the public counter (same rule as video_metrics).
-VIEWS_SQL = ("SELECT v.video_id, v.title, substr(v.published_at, 1, 10) AS published,"
+VIEWS_SQL = ("SELECT v.video_id, v.title, v.published_at,"
              " coalesce(sum(d.views), v.view_count) AS views"
              " FROM videos v LEFT JOIN video_daily d USING(video_id) WHERE v.channel_id=?")
 
@@ -82,7 +84,8 @@ def scorecard(conn: sqlite3.Connection, channel_id: str, content_type: str | Non
     if content_type:
         sql += " AND v.content_type=?"
         args.append(content_type)
-    per_video = [dict(r) for r in conn.execute(sql + " GROUP BY v.video_id ORDER BY v.published_at DESC", args)]
+    per_video = [{**r, "published": str(pacific_day(r["published_at"]) or "")}
+                 for r in map(dict, conn.execute(sql + " GROUP BY v.video_id ORDER BY v.published_at DESC", args))]
     # Full metrics only for the two windows; the median and outliers need views alone.
     last = [video_metrics(conn, r["video_id"]) for r in per_video[:WINDOW]]
     prev = [video_metrics(conn, r["video_id"]) for r in per_video[WINDOW:2 * WINDOW]]

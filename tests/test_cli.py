@@ -40,3 +40,9 @@ def test_scorecard_table_and_json(capsys):
 def test_unknown_channel_message():
     with pytest.raises(SystemExit, match="yt auth nope"):
         cli.main(["scorecard", "nope"])
+
+
+def test_channel_name_cannot_escape_tokens_dir():
+    from yt_cli import config
+    with pytest.raises(SystemExit, match="Invalid channel name"):
+        config.token_path("../evil")

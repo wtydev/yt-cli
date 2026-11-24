@@ -56,7 +56,7 @@ def counts(conn):
 
 def test_full_sync_populates_every_table(conn):
     http = make_http()
-    res = sync.run(services(http), conn, "test", today=date(2026, 11, 22))
+    res = sync.run(services(http), conn, "test", today=date(2026, 11, 22), create_jobs=True)
     assert res.warnings == []
     assert res.videos == 3
     assert res.jobs_created == ["channel_reach_basic_a1"]
@@ -75,7 +75,7 @@ def test_full_sync_populates_every_table(conn):
 
 
 def test_resync_is_idempotent(conn):
-    sync.run(services(make_http()), conn, "test", today=date(2026, 11, 22))
+    sync.run(services(make_http()), conn, "test", today=date(2026, 11, 22), create_jobs=True)
     first = counts(conn)
     http = make_http(jobs_exist=True)
     res = sync.run(services(http), conn, "test", today=date(2026, 11, 22))
@@ -148,3 +148,27 @@ def test_resync_skips_known_content_types_and_resumes_channel_split(conn):
     last = conn.execute("SELECT max(day) FROM channel_daily_content_type").fetchone()[0]
     split = next(q for _, p, q in http.calls if q.get("dimensions") == "day,creatorContentType")
     assert split["startDate"] == (date.fromisoformat(last) - timedelta(days=sync.REFRESH_DAYS)).isoformat()
+
+
+def test_sync_without_yes_never_creates_jobs(conn):
+    http = make_http()
+    res = sync.run(services(http), conn, "test", today=date(2026, 11, 22))
+    assert res.jobs_created == [] and res.jobs_missing == ["channel_reach_basic_a1"]
+    assert not any(m == "POST" for m, _, _ in http.calls)
+
+
+def test_failed_traffic_detail_keeps_previous_rows(conn):
+    sync.run(services(make_http()), conn, "test", today=date(2026, 11, 22))
+    before = conn.execute("SELECT count(*) FROM video_traffic WHERE source_detail!=''").fetchone()[0]
+    sync.run(services(make_http(fail_dims=("insightTrafficSourceDetail",))), conn, "test",
+             today=date(2026, 11, 22))
+    after = conn.execute("SELECT count(*) FROM video_traffic WHERE source_detail!=''").fetchone()[0]
+    assert before > 0 and after == before
+
+
+def test_empty_reach_reissue_clears_its_period(conn):
+    text = (FIX / "reach_20261120.csv").read_text()
+    sync.ingest_reach_csv(conn, "UC", text, "2026-11-22T10:00:00Z", ["2026-11-20"])
+    header_only = text.splitlines()[0] + "\n"
+    sync.ingest_reach_csv(conn, "UC", header_only, "2026-11-23T10:00:00.5Z", ["2026-11-20"])
+    assert conn.execute("SELECT count(*) FROM reach_daily WHERE day='2026-11-20'").fetchone()[0] == 0

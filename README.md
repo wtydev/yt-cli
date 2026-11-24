@@ -9,6 +9,7 @@ Privacy policy and terms: <https://wtydev.github.io/yt-cli/>.
 ```
 yt auth <channel>        browser sign-in, one token per channel
 yt sync <channel>        Analytics API + Reporting API -> ~/.local/share/yt-cli/analytics.db
+                         (add --yes once, to create the reach report job)
 yt video <id>            one video: retention curve, traffic, audience, day by day
 yt video --best <ch>     the same for the channel's most-viewed video
 yt scorecard <channel>   last 4 vs previous 4, outliers (>=5x median), AI/slop comments
@@ -37,7 +38,7 @@ Then:
 ```sh
 uv tool install git+https://github.com/wtydev/yt-cli   # or: uv run yt ... from a checkout
 yt auth bigobars    # pick the right channel on Google's chooser
-yt sync bigobars
+yt sync bigobars --yes   # --yes only the first time: creates the reach report job
 ```
 
 Analytics data is only available to the channel **owner** (not a manager). For brand-account
@@ -47,8 +48,8 @@ channels, choose the channel on Google's account chooser during `yt auth`.
 
 - **Data lag.** Analytics data arrives 1–2 days late; each sync re-pulls the last 7 days.
   All days are Pacific time, as YouTube reports them.
-- **Impressions and CTR** come only from the Reporting API (`channel_reach_basic_a1`). The first
-  `yt sync` creates the job; YouTube produces the first daily file about 48 hours later.
+- **Impressions and CTR** come only from the Reporting API (`channel_reach_basic_a1`).
+  `yt sync <ch> --yes` creates the job once; YouTube produces the first daily file about 48 hours later.
 - **Idempotent.** Syncing again converges to the same rows. Newer re-issued reach reports
   replace older ones for the same day.
 - **Uploads** from a project that hasn't passed YouTube's API compliance audit are locked to

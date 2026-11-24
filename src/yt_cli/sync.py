@@ -11,7 +11,7 @@ import re
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 from googleapiclient.errors import HttpError
 
@@ -53,23 +53,26 @@ class SyncResult:
     breakdown_rows: int = 0
     content_type_rows: int = 0
     jobs_created: list[str] = field(default_factory=list)
+    jobs_missing: list[str] = field(default_factory=list)  # not created: needs --yes
     reports_downloaded: int = 0
     reach_rows: int = 0
     warnings: list[str] = field(default_factory=list)
     # steps that failed server-side this run; not retried for later videos
     skipped: list[str] = field(default_factory=list)
 
-    def guard(self, label: str, fn: Callable[..., object], *args, ctx: str = "") -> None:
+    def guard(self, label: str, fn: Callable[..., object], *args, ctx: str = "") -> bool:
         """Run one API step. An HttpError becomes a warning; after a 5xx the
         step is skipped for the rest of the run instead of failing per video."""
         if label in self.skipped:
-            return
+            return False
         try:
             fn(*args)
+            return True
         except HttpError as e:
             self.warnings.append(f"{ctx} {label}: {describe(e)}".lstrip())
             if status(e) >= 500:
                 self.skipped.append(label)
+            return False
 
 
 # ---------------------------------------------------------------- helpers
@@ -107,9 +110,7 @@ def query(analytics, start: date, end: date, metrics: str, **kw) -> list[dict]:
 
 def published_day(published_at: str | None) -> date:
     """Publish timestamp (UTC) -> Pacific date, the day Analytics starts counting."""
-    if not published_at:
-        return date(2005, 4, 23)
-    return datetime.fromisoformat(published_at).astimezone(config.PACIFIC).date()
+    return config.pacific_day(published_at) or date(2005, 4, 23)
 
 
 def _refresh_start(conn, sql: str, arg: str, start: date) -> date:
@@ -211,8 +212,8 @@ def _replace(conn: sqlite3.Connection, table: str, where: dict, rows: list[dict]
 def sync_video_lifetime(analytics, conn, res: SyncResult, video_id: str, start: date, end: date) -> None:
     f = f"video=={video_id}"
 
-    def safe(label, fn, *args):
-        res.guard(label, fn, *args, ctx=video_id)
+    def safe(label, fn, *args) -> bool:
+        return res.guard(label, fn, *args, ctx=video_id)
 
     def retention():
         try:
@@ -245,8 +246,11 @@ def sync_video_lifetime(analytics, conn, res: SyncResult, video_id: str, start: 
         out = [row(r["insightTrafficSourceType"], "", r) for r in rows]
         for r in rows:
             t = r["insightTrafficSourceType"]
-            if t in DETAIL_TYPES and r["views"]:
-                safe(f"traffic detail {t}", details, t)
+            if t in DETAIL_TYPES and r["views"] and not safe(f"traffic detail {t}", details, t):
+                # keep what we had for this source rather than erasing it below
+                out.extend(dict(d) for d in conn.execute(
+                    "SELECT video_id, source_type, source_detail, views, watch_minutes FROM video_traffic"
+                    " WHERE video_id=? AND source_type=? AND source_detail!=''", (video_id, t)))
         res.traffic_rows += _replace(conn, "video_traffic", {"video_id": video_id}, out,
                                      ["video_id", "source_type", "source_detail"])
 
@@ -273,11 +277,16 @@ def sync_video_lifetime(analytics, conn, res: SyncResult, video_id: str, start: 
 
 # ---------------------------------------------------------------- Reporting API
 
-def ensure_jobs(reporting, conn, res: SyncResult, report_types: list[str]) -> list[dict]:
+def ensure_jobs(reporting, conn, res: SyncResult, report_types: list[str], create: bool) -> list[dict]:
+    """Find our Reporting API jobs. Creating a missing one is a write, so it
+    happens only with create=True (`yt sync --yes`)."""
     existing = [j for resp in pages(reporting.jobs()) for j in resp.get("jobs", [])]
     have = {j["reportTypeId"] for j in existing}
     for t in report_types:
         if t in have:
+            continue
+        if not create:
+            res.jobs_missing.append(t)
             continue
         job = reporting.jobs().create(body={"reportTypeId": t, "name": f"yt-cli {t}"}).execute()
         existing.append(job)
@@ -298,9 +307,11 @@ def _download(service, url: str) -> bytes:
     return content
 
 
-def ingest_reach_csv(conn, channel_id: str, text: str, create_time: str) -> int:
+def ingest_reach_csv(conn, channel_id: str, text: str, create_time: str, period_days: list[str] = ()) -> int:
     """Aggregate channel_reach_basic_a1 rows to (day, video). A newer report for
-    the same day replaces the older one; an older one never overwrites."""
+    the same day replaces the older one; an older one never overwrites. Days in
+    the report's period are replaced even when the file has no rows for them."""
+    create_time = config.utc_iso(create_time)
     agg: dict[tuple[str, str], list[float]] = {}
     for row in csv.DictReader(io.StringIO(text)):
         d = row["date"]
@@ -311,7 +322,7 @@ def ingest_reach_csv(conn, channel_id: str, text: str, create_time: str) -> int:
         a[0] += imp
         a[1] += imp * ctr
     n = 0
-    for day in sorted({d for d, _ in agg}):
+    for day in sorted({d for d, _ in agg} | set(period_days)):
         newer = conn.execute(
             "SELECT 1 FROM reach_daily WHERE channel_id=? AND day=? AND source_create_time>? LIMIT 1",
             (channel_id, day, create_time)).fetchone()
@@ -333,7 +344,8 @@ def sync_reports(reporting, conn, res: SyncResult, jobs: list[dict]) -> None:
                 text = _download(reporting, rep["downloadUrl"]).decode("utf-8")
                 n = 0
                 if job["reportTypeId"].startswith("channel_reach"):
-                    n = ingest_reach_csv(conn, res.channel_id, text, rep["createTime"])
+                    n = ingest_reach_csv(conn, res.channel_id, text, rep["createTime"],
+                                         config.pacific_days(rep.get("startTime"), rep.get("endTime")))
                     res.reach_rows += n
                 upsert(conn, "report_files", [{
                     "report_id": rep["id"], "job_id": job["id"], "report_type": job["reportTypeId"],
@@ -347,7 +359,7 @@ def sync_reports(reporting, conn, res: SyncResult, jobs: list[dict]) -> None:
 
 def run(services, conn: sqlite3.Connection, name: str, *, today: date | None = None,
         report_types: list[str] | None = None, video_ids: list[str] | None = None,
-        progress=lambda msg: None) -> SyncResult:
+        progress=lambda msg: None, create_jobs: bool = False) -> SyncResult:
     end = today or config.today_pacific()
     ch = fetch_channel(services.youtube)
     upsert(conn, "channels", [{"name": name, **ch}], ["name"])
@@ -384,7 +396,8 @@ def run(services, conn: sqlite3.Connection, name: str, *, today: date | None = N
     progress("reporting")
 
     def reporting():
-        jobs = ensure_jobs(services.reporting, conn, res, report_types or config.DEFAULT_REPORT_TYPES)
+        jobs = ensure_jobs(services.reporting, conn, res, report_types or config.DEFAULT_REPORT_TYPES,
+                           create_jobs)
         conn.commit()
         sync_reports(services.reporting, conn, res, jobs)
     res.guard("reporting", reporting)

@@ -53,15 +53,16 @@ def _row(c: dict, channel_id: str, video_id: str | None, parent_id: str | None) 
 
 
 def sync(youtube, conn: sqlite3.Connection, channel_id: str, *, full: bool = False,
-         max_pages: int = 50) -> CommentsResult:
+         max_pages: int | None = 50) -> CommentsResult:
     """Walk threads newest-first. Incremental by default: stop at the first page
-    whose threads are all already stored and unchanged."""
+    whose threads are all already stored and unchanged (at most max_pages).
+    full=True walks every page."""
     res = CommentsResult()
     known = {r[0]: r[1] for r in conn.execute(
         "SELECT comment_id, updated_at FROM comments WHERE channel_id=?", (channel_id,))}
     threads = pages(youtube.commentThreads(), part="snippet,replies", allThreadsRelatedToChannelId=channel_id,
                     maxResults=100, order="time", textFormat="plainText")
-    for resp in islice(threads, max_pages):
+    for resp in islice(threads, None if full else max_pages):
         rows: list[dict] = []
         page_all_known = True
         for th in resp.get("items", []):

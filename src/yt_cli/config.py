@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from datetime import date, datetime
+import re
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -35,7 +36,12 @@ def client_secret_path() -> Path:
     return config_dir() / "client_secret.json"
 
 
+CHANNEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+
+
 def token_path(channel: str) -> Path:
+    if not CHANNEL_NAME.fullmatch(channel):
+        raise SystemExit(f"Invalid channel name '{channel}': use letters, digits, '-' or '_'.")
     return config_dir() / "tokens" / f"{channel}.json"
 
 
@@ -46,3 +52,21 @@ def db_path() -> Path:
 def today_pacific() -> date:
     """YouTube Analytics and Reporting days are Pacific-time days."""
     return datetime.now(PACIFIC).date()
+
+
+def pacific_day(ts: str | None) -> date | None:
+    """RFC 3339 timestamp -> the Pacific date YouTube files it under."""
+    return datetime.fromisoformat(ts).astimezone(PACIFIC).date() if ts else None
+
+
+def pacific_days(start: str | None, end: str | None) -> list[str]:
+    """Pacific days in the half-open period [start, end), as ISO dates."""
+    a, b = pacific_day(start), pacific_day(end)
+    if not a or not b:
+        return []
+    return [(a + timedelta(days=i)).isoformat() for i in range((b - a).days)]
+
+
+def utc_iso(ts: str) -> str:
+    """Normalize an RFC 3339 timestamp so string comparison orders by time."""
+    return datetime.fromisoformat(ts).astimezone(UTC).isoformat(timespec="microseconds")

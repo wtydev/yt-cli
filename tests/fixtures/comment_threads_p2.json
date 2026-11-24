@@ -1,0 +1,33 @@
+{
+ "kind": "youtube#commentThreadListResponse",
+ "items": [
+  {
+   "kind": "youtube#commentThread",
+   "id": "Ugw3",
+   "snippet": {
+    "channelId": "UCtestChannel000000000000",
+    "videoId": "vidLong0002",
+    "topLevelComment": {
+     "kind": "youtube#comment",
+     "id": "Ugw3",
+     "snippet": {
+      "channelId": "UCtestChannel000000000000",
+      "videoId": "vidLong0002",
+      "textDisplay": "Is the voice made with Suno?",
+      "textOriginal": "Is the voice made with Suno?",
+      "authorDisplayName": "@viewer3",
+      "authorChannelId": {
+       "value": "UCviewer3"
+      },
+      "likeCount": 1,
+      "publishedAt": "2026-11-02T10:00:00Z",
+      "updatedAt": "2026-11-02T10:00:00Z"
+     }
+    },
+    "canReply": true,
+    "totalReplyCount": 0,
+    "isPublic": true
+   }
+  }
+ ]
+}

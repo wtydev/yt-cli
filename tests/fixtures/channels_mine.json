@@ -1,0 +1,26 @@
+{
+ "kind": "youtube#channelListResponse",
+ "etag": "x",
+ "pageInfo": {
+  "totalResults": 1,
+  "resultsPerPage": 5
+ },
+ "items": [
+  {
+   "kind": "youtube#channel",
+   "etag": "x",
+   "id": "UCtestChannel000000000000",
+   "snippet": {
+    "title": "Test Channel",
+    "description": "",
+    "publishedAt": "2026-06-01T00:00:00Z"
+   },
+   "contentDetails": {
+    "relatedPlaylists": {
+     "likes": "",
+     "uploads": "UUtestChannel000000000000"
+    }
+   }
+  }
+ ]
+}

@@ -133,13 +133,17 @@ def cmd_scorecard(args) -> Any:
 
     def render(d):
         w = report.WINDOW
-        out = [f"Scorecard: {args.channel} ({d['content_type']}, {d['videos_considered']} public videos,"
-               f" median views {output.fmt(d['median_views'])})"]
+        out = [(f"Scorecard: {args.channel} ({d['content_type']}, {d['videos_considered']} public videos,"
+                f" median views {output.fmt(d['median_views'])})")]
         out.append("\n" + table(d["trend"], title=f"Rolling average: last {w} vs previous {w}"))
         out.append("\n" + table(d["last_videos"], ["published", "title", "type", "views", "impressions", "ctr_pct",
-                                                   "ret_30s_pct", "avg_viewed_pct", "subs_per_1k",
+                                                   "hook_3s_pct", "ret_half_pct", "avg_viewed_pct", "subs_per_1k",
                                                    "browse_sugg_pct", "shorts_feed_pct", "ai_comments"],
                                 title=f"Last {w} videos", max_width=32))
+        if d["pending"]:
+            out.append("\nNot in Analytics yet (1-2 day lag), so left out of the averages: "
+                       + ", ".join(f"{p['title']} ({p['published']}, {output.fmt(p['views'])} public views)"
+                                   for p in d["pending"]))
         out.append("\n" + table(d["outliers"], title=f"Outliers (≥{report.OUTLIER_MULTIPLE:g}× median views)"))
         out.append(f"\nAI/slop comments: last {w} = {d['ai_comments_last']}, previous {w} = {d['ai_comments_prev']}")
         if not d["reach_days"]:
@@ -207,6 +211,15 @@ def cmd_comments(args) -> Any:
     return data, render
 
 
+def cmd_query(args) -> Any:
+    if args.schema:
+        return {"schema": db.SCHEMA}, lambda d: d["schema"].strip()
+    if not args.sql:
+        raise SystemExit("Give a SQL statement, or --schema to see the tables.")
+    rows = db.query_readonly(args.sql, args.limit)
+    return rows, lambda d: table(d, max_width=60)
+
+
 # ---------------------------------------------------------------- parser
 
 def parser() -> argparse.ArgumentParser:
@@ -219,7 +232,7 @@ def parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("auth", parents=[common], help="sign in for a channel (browser)")
-    s.add_argument("channel", help="local name for the channel, e.g. bigobars")
+    s.add_argument("channel", help="local name for the channel, e.g. mychannel")
     s.add_argument("--monetary", action="store_true", help="also request revenue (monetary) analytics")
     s.set_defaults(fn=cmd_auth)
 
@@ -268,6 +281,12 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--limit", type=int, default=30)
     s.add_argument("--pin", metavar="COMMENT_ID", help="pin a comment (the API has no pin; prints the Studio link)")
     s.set_defaults(fn=cmd_comments)
+
+    s = sub.add_parser("query", parents=[common], help="read-only SQL over the local database")
+    s.add_argument("sql", nargs="?", help="one SELECT statement")
+    s.add_argument("--schema", action="store_true", help="print the table definitions")
+    s.add_argument("--limit", type=int, default=500, help="max rows (default 500)")
+    s.set_defaults(fn=cmd_query)
     return p
 
 

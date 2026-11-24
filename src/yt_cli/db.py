@@ -146,3 +146,18 @@ def channel_id_for(conn: sqlite3.Connection, name: str) -> str:
     if not row:
         raise SystemExit(f"Unknown channel '{name}'. Run: yt auth {name}")
     return row["channel_id"]
+
+
+def query_readonly(sql: str, limit: int = 500, path: Path | None = None) -> list[dict]:
+    """Run one SQL statement on a read-only connection; at most `limit` rows."""
+    path = path or config.db_path()
+    if not path.exists():
+        raise SystemExit("No database yet. Run: yt sync <channel>")
+    conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(sql).fetchmany(limit)]
+    except sqlite3.Error as e:
+        raise SystemExit(f"SQL error: {e}") from None
+    finally:
+        conn.close()

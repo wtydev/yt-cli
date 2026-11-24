@@ -1,6 +1,10 @@
 """`yt sync`: pull Data API metadata, Analytics API reports and Reporting API
 bulk files into SQLite. Safe to re-run: every table is upserted or replaced
-per (video, report) inside a transaction."""
+per (video, report) inside a transaction.
+
+Each sync also refreshes stored history that is getting old (see
+db.FULL_REFRESH_DAYS), so a channel synced at least every couple of weeks keeps
+its history while db.purge_stale enforces the 30-day limit."""
 
 from __future__ import annotations
 
@@ -15,7 +19,7 @@ from datetime import date, timedelta
 
 from googleapiclient.errors import HttpError
 
-from . import config
+from . import config, db
 from .api import describe, pages, status
 from .db import upsert
 
@@ -113,10 +117,14 @@ def published_day(published_at: str | None) -> date:
     return config.pacific_day(published_at) or date(2005, 4, 23)
 
 
-def _refresh_start(conn, sql: str, arg: str, start: date) -> date:
-    """Resume from the last stored day minus REFRESH_DAYS, never before `start`."""
-    last = conn.execute(sql, (arg,)).fetchone()[0]
-    return max(start, date.fromisoformat(last) - timedelta(days=REFRESH_DAYS)) if last else start
+def _refresh_start(conn, table: str, key_col: str, key: str, start: date) -> date:
+    """Resume from the last stored day minus REFRESH_DAYS, never before `start`.
+    Start over from `start` when any stored row is db.FULL_REFRESH_DAYS old."""
+    last, oldest = conn.execute(f"SELECT max(day), min(fetched_at) FROM {table} WHERE {key_col}=?",
+                                (key,)).fetchone()
+    if not last or (oldest or "") < db.ago(db.FULL_REFRESH_DAYS):
+        return start
+    return max(start, date.fromisoformat(last) - timedelta(days=REFRESH_DAYS))
 
 
 # ---------------------------------------------------------------- Data API
@@ -164,8 +172,7 @@ def fetch_videos(youtube, uploads_playlist: str) -> list[dict]:
 
 def sync_channel_content_types(analytics, conn, res: SyncResult, start: date, end: date) -> None:
     """Shorts vs long form, channel-level daily split."""
-    start = _refresh_start(conn, "SELECT max(day) FROM channel_daily_content_type WHERE channel_id=?",
-                           res.channel_id, start)
+    start = _refresh_start(conn, "channel_daily_content_type", "channel_id", res.channel_id, start)
 
     def run():
         rows = query(analytics, start, end,
@@ -194,7 +201,7 @@ def video_content_type(analytics, video_id: str, start: date, end: date) -> str 
 
 
 def sync_video_daily(analytics, conn, res: SyncResult, video_id: str, start: date, end: date) -> None:
-    start = _refresh_start(conn, "SELECT max(day) FROM video_daily WHERE video_id=?", video_id, start)
+    start = _refresh_start(conn, "video_daily", "video_id", video_id, start)
     if start > end:
         return
     rows = query(analytics, start, end, ",".join(m for m, _ in DAILY_METRICS),
@@ -339,7 +346,9 @@ def sync_reports(reporting, conn, res: SyncResult, jobs: list[dict]) -> None:
     for job in jobs:
         for resp in pages(reporting.jobs().reports(), jobId=job["id"]):
             for rep in resp.get("reports", []):
-                if conn.execute("SELECT 1 FROM report_files WHERE report_id=?", (rep["id"],)).fetchone():
+                # downloaded before and still fresh; otherwise (re-)download to refresh it
+                if conn.execute("SELECT 1 FROM report_files WHERE report_id=? AND downloaded_at>=?",
+                                (rep["id"], db.ago(db.FULL_REFRESH_DAYS))).fetchone():
                     continue
                 text = _download(reporting, rep["downloadUrl"]).decode("utf-8")
                 n = 0

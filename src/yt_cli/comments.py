@@ -10,6 +10,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from itertools import islice
 
+from . import db
 from .api import pages
 from .db import upsert
 
@@ -56,8 +57,12 @@ def sync(youtube, conn: sqlite3.Connection, channel_id: str, *, full: bool = Fal
          max_pages: int | None = 50) -> CommentsResult:
     """Walk threads newest-first. Incremental by default: stop at the first page
     whose threads are all already stored and unchanged (at most max_pages).
-    full=True walks every page."""
+    full=True walks every page. A walk is full anyway once any stored comment
+    is db.FULL_REFRESH_DAYS old, so comments are refreshed before the 30-day purge
+    and ones deleted on YouTube drop out."""
     res = CommentsResult()
+    oldest = conn.execute("SELECT min(fetched_at) FROM comments WHERE channel_id=?", (channel_id,)).fetchone()[0]
+    full = full or bool(oldest and oldest < db.ago(db.FULL_REFRESH_DAYS))
     known = {r[0]: r[1] for r in conn.execute(
         "SELECT comment_id, updated_at FROM comments WHERE channel_id=?", (channel_id,))}
     threads = pages(youtube.commentThreads(), part="snippet,replies", allThreadsRelatedToChannelId=channel_id,

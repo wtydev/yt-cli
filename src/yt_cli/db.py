@@ -1,10 +1,16 @@
 """SQLite storage. Every write is an upsert keyed on natural keys, so re-running
-a sync over the same window converges to the same rows."""
+a sync over the same window converges to the same rows.
+
+Retention (YouTube API Developer Policies III.E.4): every row that came from
+Google carries the time it was last fetched. A sync refreshes what it can;
+`purge_stale` deletes rows not refreshed within MAX_AGE_DAYS, on every
+`connect`, so data never outlives the 30-day limit while yt is in use."""
 
 from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import config
@@ -15,7 +21,8 @@ CREATE TABLE IF NOT EXISTS channels (
     channel_id TEXT UNIQUE NOT NULL,
     title TEXT,
     uploads_playlist TEXT,
-    added_at TEXT DEFAULT (datetime('now'))
+    added_at TEXT DEFAULT (datetime('now')),
+    fetched_at TEXT
 );
 CREATE TABLE IF NOT EXISTS videos (
     video_id TEXT PRIMARY KEY,
@@ -35,6 +42,7 @@ CREATE TABLE IF NOT EXISTS video_daily (
     day TEXT NOT NULL,
     views INTEGER, watch_minutes REAL, avg_view_duration_s REAL, avg_view_pct REAL,
     subs_gained INTEGER, subs_lost INTEGER, likes INTEGER, comments INTEGER, shares INTEGER,
+    fetched_at TEXT,
     PRIMARY KEY (video_id, day)
 );
 CREATE TABLE IF NOT EXISTS video_retention (
@@ -42,6 +50,7 @@ CREATE TABLE IF NOT EXISTS video_retention (
     elapsed_ratio REAL NOT NULL,
     audience_watch_ratio REAL,
     relative_retention REAL,
+    fetched_at TEXT,
     PRIMARY KEY (video_id, elapsed_ratio)
 );
 -- source_detail = '' for the type-level row.
@@ -50,6 +59,7 @@ CREATE TABLE IF NOT EXISTS video_traffic (
     source_type TEXT NOT NULL,
     source_detail TEXT NOT NULL DEFAULT '',
     views INTEGER, watch_minutes REAL,
+    fetched_at TEXT,
     PRIMARY KEY (video_id, source_type, source_detail)
 );
 -- dimension in (subscribedStatus, country, ageGender, deviceType); lifetime totals.
@@ -58,6 +68,7 @@ CREATE TABLE IF NOT EXISTS video_breakdown (
     dimension TEXT NOT NULL,
     value TEXT NOT NULL,
     views INTEGER, watch_minutes REAL, viewer_pct REAL,
+    fetched_at TEXT,
     PRIMARY KEY (video_id, dimension, value)
 );
 CREATE TABLE IF NOT EXISTS channel_daily_content_type (
@@ -65,13 +76,15 @@ CREATE TABLE IF NOT EXISTS channel_daily_content_type (
     day TEXT NOT NULL,
     content_type TEXT NOT NULL,
     views INTEGER, watch_minutes REAL, subs_gained INTEGER, subs_lost INTEGER,
+    fetched_at TEXT,
     PRIMARY KEY (channel_id, day, content_type)
 );
 CREATE TABLE IF NOT EXISTS reporting_jobs (
     job_id TEXT PRIMARY KEY,
     channel_id TEXT NOT NULL,
     report_type TEXT NOT NULL,
-    create_time TEXT
+    create_time TEXT,
+    fetched_at TEXT
 );
 CREATE TABLE IF NOT EXISTS report_files (
     report_id TEXT PRIMARY KEY,
@@ -89,6 +102,7 @@ CREATE TABLE IF NOT EXISTS reach_daily (
     impressions INTEGER,
     clicks REAL,               -- sum(impressions * ctr); ctr = clicks / impressions
     source_create_time TEXT,   -- create_time of the report these rows came from
+    fetched_at TEXT,
     PRIMARY KEY (channel_id, day, video_id)
 );
 CREATE TABLE IF NOT EXISTS comments (
@@ -110,6 +124,76 @@ CREATE INDEX IF NOT EXISTS videos_channel ON videos(channel_id, published_at);
 CREATE INDEX IF NOT EXISTS reach_video ON reach_daily(video_id, day);
 """
 
+# Days a row from Google may be kept without being refreshed (policy: 30).
+MAX_AGE_DAYS = 30
+# Syncs re-fetch anything stored this long ago, well before the purge.
+FULL_REFRESH_DAYS = 14
+
+# table -> column holding the time its rows were last fetched from Google.
+FETCHED = {
+    "channels": "fetched_at",
+    "videos": "updated_at",
+    "video_daily": "fetched_at",
+    "video_retention": "fetched_at",
+    "video_traffic": "fetched_at",
+    "video_breakdown": "fetched_at",
+    "channel_daily_content_type": "fetched_at",
+    "reporting_jobs": "fetched_at",
+    "report_files": "downloaded_at",
+    "reach_daily": "fetched_at",
+    "comments": "fetched_at",
+}
+
+
+def now() -> str:
+    """UTC, in SQLite's datetime('now') format so the two compare as strings."""
+    return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def ago(days: float) -> str:
+    return (datetime.strptime(now(), "%Y-%m-%d %H:%M:%S") - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add fetched_at to databases made before it existed. Their rows are
+    dated to the upgrade, so they are refreshed or purged within 30 days."""
+    for table, col in FETCHED.items():
+        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if col not in have:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
+        conn.execute(f"UPDATE {table} SET {col}=? WHERE {col} IS NULL", (now(),))
+
+
+def purge_stale(conn: sqlite3.Connection, max_age_days: float = MAX_AGE_DAYS) -> dict[str, int]:
+    """Delete every row from Google not refreshed within max_age_days."""
+    cutoff = ago(max_age_days)
+    gone = {t: conn.execute(f"DELETE FROM {t} WHERE {c} < ?", (cutoff,)).rowcount for t, c in FETCHED.items()}
+    conn.commit()
+    return {t: n for t, n in gone.items() if n}
+
+
+def delete_channel(conn: sqlite3.Connection, name: str) -> dict[str, int]:
+    """Delete everything stored for one channel. Returns rows deleted per table."""
+    row = conn.execute("SELECT channel_id FROM channels WHERE name=?", (name,)).fetchone()
+    gone: dict[str, int] = {}
+    if row:
+        cid = (row[0],)
+        vids = "video_id IN (SELECT video_id FROM videos WHERE channel_id=?)"
+        steps = [
+            *((t, vids) for t in ("video_daily", "video_retention", "video_traffic", "video_breakdown")),
+            ("videos", "channel_id=?"),
+            ("channel_daily_content_type", "channel_id=?"),
+            ("reach_daily", "channel_id=?"),
+            ("comments", "channel_id=?"),
+            ("report_files", "job_id IN (SELECT job_id FROM reporting_jobs WHERE channel_id=?)"),
+            ("reporting_jobs", "channel_id=?"),
+        ]
+        for table, where in steps:
+            gone[table] = conn.execute(f"DELETE FROM {table} WHERE {where}", cid).rowcount
+    gone["channels"] = conn.execute("DELETE FROM channels WHERE name=?", (name,)).rowcount
+    conn.commit()
+    return {t: n for t, n in gone.items() if n}
+
 
 def connect(path: Path | None = None) -> sqlite3.Connection:
     path = path or config.db_path()
@@ -121,15 +205,22 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     if on_disk:
         conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
+    _migrate(conn)
+    purge_stale(conn)
     return conn
 
 
 def upsert(conn: sqlite3.Connection, table: str, rows: Iterable[Mapping], keys: list[str]) -> int:
     """INSERT ... ON CONFLICT(keys) DO UPDATE for each row. Every row must have
-    the same columns as the first. Returns row count."""
+    the same columns as the first. Rows for a table in FETCHED get their
+    fetched time set to now unless they carry one. Returns row count."""
     rows = list(rows)
     if not rows:
         return 0
+    stamp = FETCHED.get(table)
+    if stamp and stamp not in rows[0]:
+        t = now()
+        rows = [{**r, stamp: t} for r in rows]
     cols = list(rows[0])
     updates = [c for c in cols if c not in keys]
     sql = (
@@ -144,7 +235,9 @@ def upsert(conn: sqlite3.Connection, table: str, rows: Iterable[Mapping], keys: 
 def channel_id_for(conn: sqlite3.Connection, name: str) -> str:
     row = conn.execute("SELECT channel_id FROM channels WHERE name=?", (name,)).fetchone()
     if not row:
-        raise SystemExit(f"Unknown channel '{name}'. Run: yt auth {name}")
+        raise SystemExit(f"Unknown channel '{name}'. Run: yt auth {name}"
+                         + (f" (or yt sync {name}: data unsynced for {MAX_AGE_DAYS} days is deleted)"
+                            if config.token_path(name).exists() else ""))
     return row["channel_id"]
 
 

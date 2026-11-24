@@ -13,9 +13,13 @@ Instructions for any coding or chat agent working with this repo or using `yt`.
 
 ## Rules
 
-- **Writes need the user's explicit go-ahead.** `yt upload ... --yes` and `yt sync ... --yes`
-  write to YouTube. Show the dry-run plan first; run `--yes` only after the user confirms
-  that exact plan. There are no delete commands; don't work around that.
+- **Writes need the user's explicit go-ahead.** `yt upload ... --yes`, `yt thumbnail ... --yes` and
+  `yt sync ... --yes` write to YouTube. Show the dry-run plan first; run `--yes` only after the user confirms
+  that exact plan. `yt revoke <channel> --yes` signs yt out at Google and deletes the
+  channel's local data, so it needs the same go-ahead. No command deletes anything on
+  YouTube; don't work around that.
+- **`yt auth` asks the user to agree to the terms and privacy policy.** Never pass `--agree`
+  for them.
 - **Never handle sign-in.** `yt auth <channel>` opens a browser; the user signs in.
 - **Secrets never enter git or chat:** `client_secret.json`, `tokens/`, `.env`.
 - **Channel data stays between the user, yt and Google's APIs.** Don't send channel

@@ -43,7 +43,9 @@ for that exact plan.** The agent prepares and checks; the user decides.
    run. Uploads are resumable and retry transient errors on their own.
 
 5. **Report** the video ID and Studio link it prints. If it lists `errors` (thumbnail or
-   playlist failed), the video itself was uploaded: tell the user to fix those in Studio.
+   playlist failed), the video itself was uploaded: tell the user to fix those in Studio,
+   or, for the thumbnail, to run `yt thumbnail <channel> <video_id> <file> --yes`. Pass on
+   any `warnings` too.
 
 ## Rules and gotchas
 
@@ -55,6 +57,9 @@ for that exact plan.** The agent prepares and checks; the user decides.
 - **`synthetic_media`**: set `true` when realistic-looking content was altered or
   generated with AI (YouTube's disclosure, `status.containsSyntheticMedia`). Ask if unsure.
 - **`made_for_kids`** is a legal declaration (COPPA). Ask; don't guess.
+- **Thumbnails**: PNG or JPEG, up to 50 MB; 16:9 for videos, 9:16 for Shorts. yt sets it
+  only after YouTube finishes processing the video. They need a verified channel. A Short's
+  thumbnail never shows in the Shorts feed, only in search, the channel page and subscriptions.
 - **Category** accepts an ID or a name (`education`, `science`, `entertainment`, …).
 - **Subscribers are not notified** for private uploads.
 - yt has **no delete command**. If a test upload must go, the user deletes it in Studio.

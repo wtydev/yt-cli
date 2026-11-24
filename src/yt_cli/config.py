@@ -18,6 +18,14 @@ SCOPES = [
 ]
 MONETARY_SCOPE = "https://www.googleapis.com/auth/yt-analytics-monetary.readonly"
 
+# Users accept these before `yt auth` opens Google's sign-in. Bump POLICY_VERSION
+# (the privacy policy's effective date) whenever either page changes materially.
+POLICY_VERSION = "2026-11-24"
+PRIVACY_URL = "https://wtydev.github.io/yt-cli/privacy.html"
+TERMS_URL = "https://wtydev.github.io/yt-cli/terms.html"
+YOUTUBE_TERMS_URL = "https://www.youtube.com/t/terms"
+GOOGLE_PRIVACY_URL = "https://policies.google.com/privacy"
+
 # Reporting API jobs created on first sync. channel_reach_basic_a1 carries
 # thumbnail impressions and CTR, which the Analytics API does not expose.
 PRIVACY = ("private", "unlisted", "public")
@@ -30,6 +38,10 @@ def config_dir() -> Path:
 
 def data_dir() -> Path:
     return Path(os.environ.get("YT_CLI_DATA_DIR", Path.home() / ".local" / "share" / "yt-cli"))
+
+
+def acceptance_path() -> Path:
+    return config_dir() / "accepted-policies.json"
 
 
 def client_secret_path() -> Path:

@@ -28,6 +28,8 @@ def _progress(args):
 def cmd_auth(args) -> Any:
     from . import auth, sync
 
+    config.token_path(args.channel)  # validate the name before asking anything
+    auth.accept_policies(agree=args.agree)
     creds = auth.login(args.channel, monetary=args.monetary)
     ch = sync.fetch_channel(auth.Services(credentials=creds, cache_discovery=False).youtube)
     conn = db.connect()
@@ -42,6 +44,29 @@ def cmd_auth(args) -> Any:
     data = {"name": args.channel, **ch, "scopes": sorted(creds.scopes or [])}
     return data, lambda d: kv({"channel": d["name"], "title": d["title"], "channel_id": d["channel_id"],
                                "token": str(config.token_path(d["name"]))}, "Authorized")
+
+
+def cmd_revoke(args) -> Any:
+    from . import auth
+
+    token = config.token_path(args.channel)
+    conn = db.connect()
+    known = conn.execute("SELECT title, channel_id FROM channels WHERE name=?", (args.channel,)).fetchone()
+    conn.close()
+    if not token.exists() and not known:
+        raise SystemExit(f"Nothing stored for '{args.channel}'. `yt channels` lists your channels.")
+    if not args.yes:
+        plan = {"channel": args.channel, "title": known["title"] if known else None,
+                "revoke_at_google": token.exists(), "delete_token": str(token) if token.exists() else None,
+                "delete_stored_data": bool(known)}
+        return {"dry_run": True, "plan": plan}, lambda d: "\n".join([
+            kv(plan, f"Would revoke '{args.channel}':"),
+            "\nThis signs yt out at Google and deletes the channel's local history. Nothing on YouTube changes.",
+            "Nothing done. Re-run with --yes to revoke."])
+    data = {"dry_run": False, **auth.revoke(args.channel)}
+    return data, lambda d: kv({"channel": d["channel"], "revoked_at_google": d["revoked_at_google"],
+                               "token_deleted": d["token_deleted"],
+                               "rows_deleted": sum(d["rows_deleted"].values())}, "Revoked")
 
 
 def cmd_channels(args) -> Any:
@@ -173,11 +198,29 @@ def cmd_upload(args) -> Any:
                                           "\nNothing sent. Re-run with --yes to upload."])
     services = _services(args.channel)
     say = _progress(args)
-    result = upload.run(services.youtube, spec, lambda pct: say(f"{pct}%"))
+    result = upload.run(services.youtube, spec, lambda pct: say(f"{pct}%"), say=say)
     return {"dry_run": False, "plan": plan, "result": result, "notes": notes}, \
-        lambda d: "\n".join([kv({k: v for k, v in d["result"].items() if k != "errors"}, "Uploaded"), *notes,
+        lambda d: "\n".join([kv({k: v for k, v in d["result"].items() if k not in ("errors", "warnings")},
+                                "Uploaded"), *notes,
+                             *(f"note: {w}" for w in d["result"]["warnings"]),
                              *(f"warning: {e} (the video was uploaded; fix this in Studio)"
                                for e in d["result"]["errors"])])
+
+
+def cmd_thumbnail(args) -> Any:
+    from . import upload
+
+    fmt, w, h = upload.check_thumbnail(args.file)
+    plan = {"channel": args.channel, "video_id": args.video_id, "file": args.file, "image": f"{fmt} {w}x{h}"}
+    if not args.yes:
+        return {"dry_run": True, "plan": plan}, lambda d: "\n".join([
+            kv(plan, "Would set the thumbnail:"), "\nNothing sent. Re-run with --yes to set it."])
+    result = upload.set_thumbnail(_services(args.channel).youtube, args.video_id, args.file,
+                                  say=_progress(args))
+    data = {"dry_run": False, "plan": plan, **result}
+    return data, lambda d: "\n".join([
+        kv({"video_id": args.video_id, "thumbnail_set": d["thumbnail_set"], "thumbnail_url": d["thumbnail_url"]},
+           "Thumbnail"), *(f"note: {x}" for x in d["warnings"]), *(f"error: {x}" for x in d["errors"])])
 
 
 def cmd_comments(args) -> Any:
@@ -216,6 +259,8 @@ def cmd_query(args) -> Any:
         return {"schema": db.SCHEMA}, lambda d: d["schema"].strip()
     if not args.sql:
         raise SystemExit("Give a SQL statement, or --schema to see the tables.")
+    if config.db_path().exists():
+        db.connect().close()  # apply the 30-day purge before reading
     rows = db.query_readonly(args.sql, args.limit)
     return rows, lambda d: table(d, max_width=60)
 
@@ -234,7 +279,15 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser("auth", parents=[common], help="sign in for a channel (browser)")
     s.add_argument("channel", help="local name for the channel, e.g. mychannel")
     s.add_argument("--monetary", action="store_true", help="also request revenue (monetary) analytics")
+    s.add_argument("--agree", action="store_true",
+                   help="agree to the yt-cli terms and privacy policy without the prompt")
     s.set_defaults(fn=cmd_auth)
+
+    s = sub.add_parser("revoke", parents=[common],
+                       help="sign out at Google and delete a channel's token and data (needs --yes)")
+    s.add_argument("channel")
+    s.add_argument("--yes", action="store_true", help="actually revoke and delete")
+    s.set_defaults(fn=cmd_revoke)
 
     s = sub.add_parser("channels", parents=[common], help="list authorized channels")
     s.set_defaults(fn=cmd_channels)
@@ -272,6 +325,13 @@ def parser() -> argparse.ArgumentParser:
                    help="AI disclosure: altered or synthetic content (status.containsSyntheticMedia)")
     s.add_argument("--yes", action="store_true", help="actually upload")
     s.set_defaults(fn=cmd_upload)
+
+    s = sub.add_parser("thumbnail", parents=[common], help="set a video's thumbnail (needs --yes)")
+    s.add_argument("channel")
+    s.add_argument("video_id")
+    s.add_argument("file", help="PNG or JPEG, up to 50 MB")
+    s.add_argument("--yes", action="store_true", help="actually set it")
+    s.set_defaults(fn=cmd_thumbnail)
 
     s = sub.add_parser("comments", parents=[common], help="pull comments, flag AI/slop mentions")
     s.add_argument("channel")

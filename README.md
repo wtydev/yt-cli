@@ -86,7 +86,9 @@ This installs two commands: `yt` and `yt-mcp`. Upgrade later with `uv tool upgra
 yt auth mychannel
 ```
 
-A browser opens. Sign in, and if your account has several channels (brand accounts),
+The first time, yt shows the [terms](https://wtydev.github.io/yt-cli/terms.html) and
+[privacy policy](https://wtydev.github.io/yt-cli/privacy.html) and asks you to agree (pass
+`--agree` to skip the prompt). Then a browser opens. Sign in, and if your account has several channels (brand accounts),
 **pick the channel itself** on Google's chooser, not just the Google account. yt then shows
 which channel it got. If that channel is already authorized under another nickname, nothing
 is saved.
@@ -150,9 +152,11 @@ Every command accepts `--json` (before or after the subcommand) for machine-read
 | `yt video <id>` | One video in detail | no |
 | `yt comments <channel>` | Pull comments; flag AI/slop mentions | no |
 | `yt upload <channel> ...` | Plan an upload; send it with `--yes` | only with `--yes` |
+| `yt thumbnail <channel> <video_id> <file>` | Set a video's thumbnail | only with `--yes` |
 | `yt query "<sql>"` | Read-only SQL on the local database | no |
+| `yt revoke <channel>` | Revoke yt's access at Google; delete the channel's token and local data | no (needs `--yes`) |
 
-There are no delete commands.
+No command deletes anything on YouTube.
 
 ### `yt sync`
 
@@ -275,7 +279,7 @@ flags override its keys:
 | `category` / `--category` | An ID (`27`) or a name: `education`, `science`, `entertainment`, `gaming`, `music`, `howto`, `comedy`, `people`, `news`, … |
 | `privacy` / `--privacy` | `private` (default), `unlisted`, `public`. |
 | `publish_at` / `--publish-at` | Scheduled publish time, ISO 8601 with timezone. Requires `private`. |
-| `thumbnail` / `--thumbnail` | Image file; set after the upload. |
+| `thumbnail` / `--thumbnail` | PNG or JPEG, up to 50 MB, at least 640 px on the long side. 16:9 for videos, 9:16 for Shorts. Set once YouTube has processed the video. |
 | `playlist` / `--playlist` | Playlist ID to add the video to. |
 | `made_for_kids` / `--[no-]made-for-kids` | YouTube's audience declaration (COPPA). |
 | `synthetic_media` / `--[no-]synthetic-media` | YouTube's AI disclosure for realistic altered or synthetic content. |
@@ -284,12 +288,26 @@ Without `--yes`, the command validates everything and prints the plan. With `--y
 uploads and prints the video ID and Studio link. If the thumbnail or playlist step fails,
 the video is still uploaded: yt prints a warning so you can fix that part in Studio.
 
+With a thumbnail, yt waits for YouTube to finish processing the video before setting it (up to
+20 minutes), because YouTube can silently drop a thumbnail set on a Short that is still
+processing. `thumbnail_set` is true only when YouTube accepted the image for a processed
+video. To set or replace a thumbnail later, for any video on the channel:
+
+```sh
+yt thumbnail mychannel <video_id> cover.png         # checks the image, sends nothing
+yt thumbnail mychannel <video_id> cover.png --yes   # sets it
+```
+
 Notes:
 
 - **YouTube locks uploads to private** for API projects that haven't passed its compliance
   audit, whatever privacy you request. The plan warns you about this. Make the video public
   in Studio, or apply for the audit.
 - Subscribers aren't notified about private uploads.
+- **Custom thumbnails need a verified channel** (<https://www.youtube.com/verify>). For Shorts
+  the feature is still rolling out, so YouTube may refuse it with a 403. A Short's custom
+  thumbnail shows in search, on the channel page and in subscriptions, **never in the Shorts
+  feed**, which shows a frame from the video. It can take a while to appear.
 - yt can't delete videos. Delete test uploads in Studio.
 
 ### `yt query`
@@ -473,8 +491,14 @@ Override these locations with `YT_CLI_CONFIG_DIR` and `YT_CLI_DATA_DIR`.
 - yt talks only to Google's APIs. Nothing is sent anywhere else, and there's no telemetry.
 - The OAuth scopes are YouTube read-only, upload, comment read (`force-ssl`) and Analytics
   read-only, plus monetary analytics if you ask for them.
-- To revoke access, remove the app at <https://myaccount.google.com/permissions> and delete the
-  token file. To wipe the history, delete `analytics.db`.
+- **Data is kept for at most 30 days without a refresh**, as YouTube's API policies require. Each
+  sync re-fetches whatever is getting old, so a channel you sync at least every two weeks keeps
+  its full history. Data that isn't refreshed within 30 days is deleted the next time yt runs.
+  Impressions and CTR only go back as far as the Reporting API still keeps its daily files.
+- To revoke access, run `yt revoke <channel> --yes`. It revokes the token at Google and deletes
+  the channel's token and data. If you remove the app at <https://myaccount.google.com/permissions>
+  instead, yt deletes that channel's token and data the next time it runs for that channel. To wipe
+  everything, delete `analytics.db`.
 - When an agent uses yt, your channel data goes to that agent's model provider like any
   other text in the conversation. Keep that in mind when choosing an agent.
 
@@ -486,7 +510,7 @@ Override these locations with `YT_CLI_CONFIG_DIR` and `YT_CLI_DATA_DIR`.
 |---|---|
 | `Missing …/client_secret.json` | Do [step 2 of Setup](#2-create-your-google-cloud-oauth-client-about-10-minutes-once). |
 | `No token for 'x'` | `yt auth x` |
-| `invalid_grant` / "Token has been expired or revoked" | Run `yt auth <channel>` again. If it keeps happening every 7 days, the app is still in *Testing*: publish it (Setup step 4). |
+| "Google no longer authorizes yt for 'x'" | Access was revoked or the grant expired, so yt deleted that channel's token and data. Run `yt auth x`, then `yt sync x`. If it keeps happening every 7 days, the app is still in *Testing*: publish it (Setup step 4). |
 | `Unknown channel 'x'` | Use the nickname from `yt channels`, or run `yt auth x`. |
 | "Google hasn't verified this app" | Expected for a personal unverified app: **Advanced → Go to (app name)**. |
 | Analytics `403 Forbidden` | Sign in as the channel **owner**, and pick the channel (not just the account) on the chooser. |

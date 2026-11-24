@@ -101,7 +101,7 @@
   </nav>
   <main>
     <h1>Privacy policy</h1>
-    <p class="date">Effective <time datetime="2026-11-23">November 23, 2026</time></p>
+    <p class="date">Effective <time datetime="2026-11-24">November 24, 2026</time></p>
     <p>yt-cli uses YouTube API Services, including the YouTube Data, Analytics, and Reporting APIs. It uses Google OAuth for desktop apps to connect to the YouTube account you authorize. See the <a href="https://www.youtube.com/t/terms">YouTube Terms of Service</a> and the <a href="https://policies.google.com/privacy">Google Privacy Policy</a>.</p>
 
     <h2>Google permissions and data use</h2>
@@ -117,17 +117,24 @@
 
       <dt><code>yt-analytics.readonly</code></dt>
       <dd>Reads non-financial channel and video metrics, such as views and watch time, through the YouTube Analytics and Reporting APIs so you can review your channels’ performance.</dd>
+
+      <dt><code>yt-analytics-monetary.readonly</code> (optional)</dt>
+      <dd>Requested only if you run <code>yt auth --monetary</code>. Allows reading revenue metrics for your channel through the YouTube Analytics and Reporting APIs.</dd>
     </dl>
 
     <h2>Local storage and Limited Use</h2>
     <p>yt-cli stores downloaded data in a SQLite database and saves OAuth access and refresh tokens in local files under your home directory. The app runs on your device and connects directly to Google and YouTube to authorize access, retrieve data, and carry out the YouTube actions you request. There is no yt-cli server, and the maintainer does not receive your data.</p>
+    <p>yt-cli does not use cookies or similar technologies, does not collect information about your device, and does not let third parties serve content or advertisements.</p>
     <p>yt-cli uses Google user data only for the features described above. It does not transfer or share that data with third parties, sell it, or use it for ads or tracking. yt-cli’s use of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including its Limited Use requirements.</p>
 
+    <p>If you choose to run yt-cli through an AI agent, the output you share with that agent goes to the agent’s provider under that provider’s terms. yt-cli itself does not send it anywhere.</p>
+
+    <h2>Data retention</h2>
+    <p>Each sync refreshes stored data. yt-cli deletes any data it has not refreshed from Google within 30 days. When you revoke access with <code>yt revoke</code>, it deletes that channel’s token and data right away. If Google reports that access was revoked, yt-cli deletes the same data the next time it runs.</p>
+
     <h2>Revoke access and delete local data</h2>
-    <ol>
-      <li>Open <a href="https://security.google.com/settings/security/permissions">Google Account permissions</a>, select yt-cli, and remove its access.</li>
-      <li>Close yt-cli and delete its OAuth token files and SQLite database under your home directory.</li>
-    </ol>
+    <p>Run <code>yt revoke &lt;channel&gt; --yes</code>. It revokes yt-cli’s access at Google and deletes that channel’s token and stored data.</p>
+    <p>You can also revoke access yourself on the Google security settings page at <a href="https://security.google.com/settings/security/permissions">https://security.google.com/settings/security/permissions</a>: select yt-cli and remove its access. Then delete yt-cli’s OAuth token files and SQLite database under your home directory, or wait for yt-cli to delete them the next time it runs.</p>
     <p>Deleting those files removes yt-cli’s local copies. To delete content stored on YouTube, use YouTube or YouTube Studio.</p>
 
     <h2>Contact</h2>

@@ -69,6 +69,33 @@ def cmd_revoke(args) -> Any:
                                "rows_deleted": sum(d["rows_deleted"].values())}, "Revoked")
 
 
+def cmd_rename(args) -> Any:
+    old, new = config.token_path(args.old), config.token_path(args.new)  # validates both names
+    conn = db.connect()
+    try:
+        known = conn.execute("SELECT 1 FROM channels WHERE name=?", (args.old,)).fetchone()
+        if not old.exists() and not known:
+            raise SystemExit(f"Nothing stored for '{args.old}'. `yt channels` lists your channels.")
+        if args.new == args.old:
+            raise SystemExit("The new name is the same as the old one.")
+        if new.exists() or conn.execute("SELECT 1 FROM channels WHERE name=?", (args.new,)).fetchone():
+            raise SystemExit(f"'{args.new}' is already in use; pick another name.")
+        moved = old.exists()
+        if moved:
+            old.rename(new)
+        try:
+            conn.execute("UPDATE channels SET name=? WHERE name=?", (args.new, args.old))
+            conn.commit()
+        except Exception:
+            if moved:
+                new.rename(old)
+            raise
+    finally:
+        conn.close()
+    data = {"old": args.old, "new": args.new, "token_moved": moved, "database_updated": bool(known)}
+    return data, lambda d: kv(d, "Renamed")
+
+
 def cmd_channels(args) -> Any:
     conn = db.connect()
     rows = [dict(r) for r in conn.execute("SELECT name, title, channel_id FROM channels ORDER BY name")]
@@ -288,6 +315,12 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("channel")
     s.add_argument("--yes", action="store_true", help="actually revoke and delete")
     s.set_defaults(fn=cmd_revoke)
+
+    s = sub.add_parser("rename", parents=[common],
+                       help="change a channel's local name in yt (not its YouTube title)")
+    s.add_argument("old", help="current local name")
+    s.add_argument("new", help="new local name")
+    s.set_defaults(fn=cmd_rename)
 
     s = sub.add_parser("channels", parents=[common], help="list authorized channels")
     s.set_defaults(fn=cmd_channels)

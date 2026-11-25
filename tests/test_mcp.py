@@ -70,9 +70,16 @@ def test_sync_never_creates_jobs(monkeypatch):
 def test_no_write_tools_registered():
     tools = asyncio.run(mcp_server.server.list_tools())
     names = {t.name for t in tools}
-    assert names == {"yt_channels", "yt_sync", "yt_scorecard", "yt_video", "yt_comments",
+    assert names == {"yt_channels", "yt_rename", "yt_sync", "yt_scorecard", "yt_video", "yt_comments",
                      "yt_upload_plan", "yt_query", "yt_schema"}
     assert all(t.annotations.destructive_hint is False for t in tools)
+
+
+def test_rename_tool(seeded):
+    assert mcp_server.yt_rename("b", "c")["database_updated"] is True
+    assert mcp_server.yt_channels()[0]["name"] == "c"
+    with pytest.raises(ToolError, match="Nothing stored"):
+        mcp_server.yt_rename("b", "d")
 
 
 def test_call_over_protocol_layer(seeded):

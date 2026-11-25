@@ -38,6 +38,8 @@ the user, and let them run the printed `yt upload ... --yes` command themselves.
 READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
 # Pulls from Google into the local database: no YouTube writes, but it reaches out.
 PULL = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True)
+# Changes only yt's local state: nothing leaves the machine.
+LOCAL = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
 
 server = MCPServer("yt", instructions=INSTRUCTIONS)
 
@@ -60,6 +62,13 @@ def _flag(name: str, on: bool) -> list[str]:
 def yt_channels() -> list[dict]:
     """List the channels authorized with `yt auth` (local name, title, channel ID)."""
     return run("channels")
+
+
+@server.tool(annotations=LOCAL)
+def yt_rename(old: str, new: str) -> dict:
+    """Change a channel's local name in yt (the name used in every other tool). Moves its
+    token and keeps all synced data. Does not change the channel's title on YouTube."""
+    return run("rename", old, new)
 
 
 @server.tool(annotations=PULL)

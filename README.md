@@ -147,6 +147,7 @@ Every command accepts `--json` (before or after the subcommand) for machine-read
 |---|---|---|
 | `yt auth <channel>` | Browser sign-in; saves a token for that channel | no |
 | `yt channels` | List authorized channels | no |
+| `yt rename <old> <new>` | Change a channel's local name in yt; synced data is kept | no |
 | `yt sync <channel>` | Pull analytics and reach reports into the database | only with `--yes` (creates a report job) |
 | `yt scorecard <channel>` | Last 4 vs previous 4, median, outliers | no |
 | `yt video <id>` | One video in detail | no |
@@ -404,6 +405,7 @@ command to run yourself.
 | Tool | Equivalent | What it does |
 |---|---|---|
 | `yt_channels` | `yt channels` | List authorized channels |
+| `yt_rename` | `yt rename` | Change a channel's local name; keeps its data |
 | `yt_sync` | `yt sync` (never `--yes`) | Pull fresh data into the database |
 | `yt_scorecard` | `yt scorecard` | Last 4 vs previous 4, outliers |
 | `yt_video` | `yt video` | One video in detail, or the channel's best |
